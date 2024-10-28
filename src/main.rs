@@ -5,8 +5,7 @@ use network::Network;
 fn main() {
     let mut net = Network::new();
 
-    // Generate a random graph
-    net.random_graph(5, 3);
+    net.barabasi_albert(10);
     
     // Display nodes and their connections
     net.display_nodes();

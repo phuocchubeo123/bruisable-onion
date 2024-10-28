@@ -68,6 +68,16 @@ impl Network {
         } else {
             println!("Node {} does not exist in the network", node1);
         }
+
+        if let Some(neighbors) = self.edges.get_mut(node2) {
+            if !neighbors.contains(node1) {
+                neighbors.push(node1.clone());
+            } else {
+                println!("Nodes {} and {} are already connected", node1, node2);
+            }
+        } else {
+            println!("Node {} does not exist in the network", node1);
+        }
     }
 
     pub fn display_nodes(&self) {
@@ -101,6 +111,26 @@ impl Network {
             let node1 = format!("Node{}", rng.gen_range(0..num_nodes));
             let node2 = format!("Node{}", rng.gen_range(0..num_nodes));
             self.connect(&node1, &node2);
+        }
+    }
+
+    pub fn barabasi_albert(&mut self, num_nodes: usize) {
+        let mut rng = rand::thread_rng();
+        let mut preferences = Vec::<String>::new(); // This preferences vector helps sampling nodes according to their preferences
+        
+        self.add_node("Node 1".to_string());
+        self.add_node("Node 2".to_string());
+        self.connect(&"Node 1".to_string(), &"Node 2".to_string());
+        preferences.push("Node 1".to_string());
+        preferences.push("Node 2".to_string());
+
+        for i in 3..num_nodes {
+            let current_node = format!("Node {}", i);
+            self.add_node(current_node.clone());
+            let connect_node = preferences[rng.gen_range(0..(2*(i-2)))].clone();
+            self.connect(&current_node, &connect_node);
+            preferences.push(current_node);
+            preferences.push(connect_node);
         }
     }
 
