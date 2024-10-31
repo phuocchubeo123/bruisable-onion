@@ -1,7 +1,10 @@
+mod crypto;
+
+use crypto::{generate_keys, dump_pubkey_list};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::thread;
 
 fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpStream>>>) {
@@ -59,6 +62,16 @@ fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpSt
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
     let clients = Arc::new(Mutex::new(HashMap::new()));
+
+    // phuoc: generate public keys, private keys and write to PKKeys.txt
+    println!("Enter the number of intermediate clients: ");
+    let mut input_string = String::new();
+    io::stdin().read_line(&mut input_string).unwrap();
+    let n: usize = input_string.trim().parse().expect("Expect a positive integer!");
+    let (ids, seckeys, pubkeys) = generate_keys(n);
+    let _ = dump_pubkey_list(&ids, &pubkeys, "PKkeys.txt");
+    //////
+
 
     println!("Server listening on port 7878");
 

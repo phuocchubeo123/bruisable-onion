@@ -1,6 +1,9 @@
+mod crypto;
+
 use std::net::TcpStream;
 use std::io::{self, Write, Read};
 use std::thread;
+use crypto::{read_pubkey_list, sample_random_path};
 
 fn main() {
     match TcpStream::connect("127.0.0.1:7878") {
@@ -12,6 +15,11 @@ fn main() {
             let mut username = String::new();
             io::stdin().read_line(&mut username).unwrap();
             stream.write_all(username.trim().as_bytes()).unwrap();
+
+            // phuoc: Read the pubkey list from PKkeys.txt
+            let (ids, pubkeys) = read_pubkey_list("PKkeys.txt").unwrap();
+            println!("Downloaded the pubkey list!");
+            ////////
 
             // Spawn a thread to listen for incoming messages
             let mut read_stream = stream.try_clone().unwrap();
@@ -31,6 +39,11 @@ fn main() {
                 println!("Enter recipient and message (format: recipient: message):");
                 let mut message = String::new();
                 io::stdin().read_line(&mut message).unwrap();
+
+                // Now we need to sample a random path and encrypt the message
+                let (random_ids, random_pubkeys) = sample_random_path(3, &ids, &pubkeys).unwrap(); // Currently I set the path length to be 3
+                //////////
+                
                 stream.write_all(message.as_bytes()).unwrap();
             }
         }
