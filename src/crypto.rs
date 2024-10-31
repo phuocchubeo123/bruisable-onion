@@ -3,22 +3,23 @@ extern crate rand;
 
 use rsa::{RsaPrivateKey, RsaPublicKey, Oaep, sha2::Sha256, pkcs1::{EncodeRsaPublicKey, DecodeRsaPublicKey, LineEnding}};
 use rand::{rngs::OsRng, Rng};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, BufRead, Write, Read};
 use std::path::Path;
 use bincode;
 
-pub fn generate_keys(n: usize) -> (Vec<usize>, Vec<RsaPrivateKey>, Vec<RsaPublicKey>) {
+pub fn generate_pubkey_list(n: usize) -> (Vec<String>, Vec<RsaPrivateKey>, Vec<RsaPublicKey>) {
     let mut ids = Vec::new();
     let mut seckeys = Vec::new();
     let mut pubkeys = Vec::new();
 
     for i in 1..=n {
+        let id = format!("Node {}", i);
         let mut rng = OsRng;
         let seckey = RsaPrivateKey::new(&mut rng, 2048).expect("failed to generate private key");
         let pubkey = RsaPublicKey::from(&seckey);
 
-        ids.push(i);
+        ids.push(id);
         seckeys.push(seckey);
         pubkeys.push(pubkey);
         println!("Created keys for id {}", i);
@@ -27,7 +28,15 @@ pub fn generate_keys(n: usize) -> (Vec<usize>, Vec<RsaPrivateKey>, Vec<RsaPublic
     (ids, seckeys, pubkeys)
 }
 
-pub fn dump_pubkey_list(ids: &[usize], pubkeys: &[RsaPublicKey], filename: &str) -> std::io::Result<()> {
+pub fn generate_pubkey() -> std::io::Result<(RsaPrivateKey, RsaPublicKey)> {
+    let mut rng = OsRng;
+    let seckey = RsaPrivateKey::new(&mut rng, 2048).expect("failed to generate private key");
+    let pubkey = RsaPublicKey::from(&seckey);
+
+    Ok((seckey, pubkey))
+}
+
+pub fn dump_pubkey_list(ids: &Vec<String>, pubkeys: &[RsaPublicKey], filename: &str) -> std::io::Result<()> {
     let path = Path::new(filename);
     let file = File::create(&path)?;
     let mut writer = BufWriter::new(file);
@@ -43,7 +52,7 @@ pub fn dump_pubkey_list(ids: &[usize], pubkeys: &[RsaPublicKey], filename: &str)
     Ok(())
 }
 
-pub fn read_pubkey_list(filename: &str) -> std::io::Result<(Vec<usize>, Vec<RsaPublicKey>)> {
+pub fn read_pubkey_list(filename: &str) -> std::io::Result<(Vec<String>, Vec<RsaPublicKey>)> {
     let path = Path::new(filename);
     let file = File::open(&path)?;
     let mut reader = io::BufReader::new(file);
@@ -53,17 +62,25 @@ pub fn read_pubkey_list(filename: &str) -> std::io::Result<(Vec<usize>, Vec<RsaP
     let mut buffer = String::new();
 
     while reader.read_line(&mut buffer)? > 0 {
+        // println!("Current line: {}", buffer);
         if buffer.starts_with("ID: ") {
-            let id = buffer["ID: ".len()..].trim().parse::<usize>().expect("failed to parse ID");
+            let id = buffer["ID: ".len()..].trim().parse::<String>().expect("failed to parse ID");
             ids.push(id);
+            buffer.clear();
         } else if buffer.starts_with("-----BEGIN RSA PUBLIC KEY-----") {
             let mut pem = buffer.clone();
+            buffer.clear();
             while reader.read_line(&mut buffer)? > 0 {
                 pem.push_str(&buffer);
                 if buffer.starts_with("-----END RSA PUBLIC KEY-----") {
+                    buffer.clear();
+                    // println!("FOUND AN END: {}", buffer);
                     break;
                 }
+                buffer.clear();
             }
+
+            // println!("Current PEM: {}", pem);
             let pubkey = RsaPublicKey::from_pkcs1_pem(&pem).expect("failed to parse public key from PEM");
             pubkeys.push(pubkey);
         }
@@ -73,7 +90,28 @@ pub fn read_pubkey_list(filename: &str) -> std::io::Result<(Vec<usize>, Vec<RsaP
     Ok((ids, pubkeys))
 }
 
-pub fn sample_random_path(l: usize, ids: &[usize], pubkeys: &[RsaPublicKey]) -> std::io::Result<(Vec<usize>, Vec<RsaPublicKey>)> {
+pub fn reset_user_list(filename: &str) -> std::io::Result<()> {
+    File::create(filename)?;
+    Ok(())
+}
+
+pub fn update_user_list(filename: &str, id: &String, pubkey: &RsaPublicKey) -> std::io::Result<()> {
+    let mut file = OpenOptions::new()
+        .append(true) // append to the currently existing list of users
+        .create(true)
+        .open(filename)?;
+    let mut writer = BufWriter::new(file);
+
+    // Write the id
+    writeln!(writer, "ID: {}", id)?;
+    // Write the pubkey
+    let pubkey_pem = pubkey.to_pkcs1_pem(LineEnding::LF).expect("failed to encode public key to PEM");
+    writeln!(writer, "{}", pubkey_pem)?;
+
+    Ok(())
+}
+
+pub fn sample_random_path(l: usize, ids: &Vec<String>, pubkeys: &[RsaPublicKey]) -> std::io::Result<(Vec<String>, Vec<RsaPublicKey>)> {
     // Sample a random path from the list of public keys
     // Two adjacent nodes must not be equal
 

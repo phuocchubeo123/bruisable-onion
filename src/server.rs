@@ -1,6 +1,8 @@
+extern crate rsa;
 mod crypto;
 
-use crypto::{generate_keys, dump_pubkey_list};
+use crypto::{generate_pubkey_list, dump_pubkey_list, reset_user_list, update_user_list};
+use rsa::{RsaPublicKey, pkcs1::DecodeRsaPublicKey};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
@@ -12,11 +14,28 @@ fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpSt
 
     //step 1: receive and store  username for this client, trim null characters
     stream.read(&mut buffer).unwrap();
-    let username = String::from_utf8_lossy(&buffer[..])
+    let username_and_pem = String::from_utf8_lossy(&buffer[..])
         .trim_matches(char::from(0))
         .trim()
         .to_string();
+
+    // TODO: Add error checking here
+
+    let mut lines = username_and_pem.lines();
+
+    let username = lines.next().unwrap().to_string();
+
+    // Every other lines join together to create a PEM
+    let pem = lines.collect::<Vec<&str>>().join("\n");
+    let pubkey = RsaPublicKey::from_pkcs1_pem(&pem).expect("Failed to parse public key from PEM");
+
     println!("User '{}' connected.", username);
+    println!("User '{} PEM: {}", username, pem);
+
+    match update_user_list("UserKeys.txt", &username, &pubkey) {
+        Ok(_) => println!("Added user to list of existing users!"),
+        Err(e) => eprintln!("Error adding user to list of existing users: {}", e),
+    };
 
     //step 2: add client to  HashMap and confirm addition
     {
@@ -68,9 +87,19 @@ fn main() {
     let mut input_string = String::new();
     io::stdin().read_line(&mut input_string).unwrap();
     let n: usize = input_string.trim().parse().expect("Expect a positive integer!");
-    let (ids, seckeys, pubkeys) = generate_keys(n);
-    let _ = dump_pubkey_list(&ids, &pubkeys, "PKkeys.txt");
+    let (ids, seckeys, pubkeys) = generate_pubkey_list(n);
+
+    match dump_pubkey_list(&ids, &pubkeys, "PKKeys.txt") {
+        Ok(_) => println!("Successfully written pseudo keys to PKKeys.txt!"),
+        Err(e) => eprintln!("Failed to write to PKKeys.txt: {}", e),
+    };
     //////
+    
+    // phuoc: reset users list
+    match reset_user_list("UserKeys.txt") {
+        Ok(_) => println!("Reseted the list in UserKeys.txt!"),
+        Err(e) => eprintln!("Failed to reset UserKeys.txt: {}", e),
+    };
 
 
     println!("Server listening on port 7878");
