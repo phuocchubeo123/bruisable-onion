@@ -30,12 +30,21 @@ fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpSt
     let pubkey = RsaPublicKey::from_pkcs1_pem(&pem).expect("Failed to parse public key from PEM");
 
     println!("User '{}' connected.", username);
-    println!("User '{} PEM: {}", username, pem);
+    println!("PEM:{}", pem);
 
     match update_user_list("UserKeys.txt", &username, &pubkey) {
         Ok(_) => println!("Added user to list of existing users!"),
         Err(e) => eprintln!("Error adding user to list of existing users: {}", e),
     };
+
+    {
+        // Lock Clients list, send the new pubkey to every clients
+        let clients = clients.lock().unwrap();
+        for (recipient, mut recipient_stream) in clients.iter() {
+            println!("Broadcasting new key to {}", recipient);
+            recipient_stream.write_all(username_and_pem.as_bytes()).unwrap();
+        }
+    }
 
     //step 2: add client to  HashMap and confirm addition
     {

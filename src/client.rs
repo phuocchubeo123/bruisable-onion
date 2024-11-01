@@ -21,8 +21,7 @@ fn main() {
             let (personal_seckey, personal_pubkey) = generate_pubkey().unwrap();
             let pubkey_pem = personal_pubkey.to_pkcs1_pem(LineEnding::LF).expect("failed to encode public key to PEM");
 
-            stream.write_all(username.trim().as_bytes()).unwrap();
-            stream.write_all(pubkey_pem.as_bytes()).unwrap();
+            stream.write_all(format!("{}\n{}",username.trim(), pubkey_pem).as_bytes()).unwrap();
 
             // phuoc: Read the pubkey list from PKkeys.txt
             let (ids, pubkeys) = read_pubkey_list("PKKeys.txt").unwrap();
