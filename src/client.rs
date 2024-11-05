@@ -5,7 +5,9 @@ use std::net::TcpStream;
 use std::io::{self, Write, Read};
 use std::thread;
 use crypto::{read_pubkey_list, sample_random_path, generate_pubkey};
-use rsa::pkcs1::{EncodeRsaPublicKey, LineEnding};
+use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey, LineEnding};
+use std::collections::HashMap;
+use rsa::RsaPublicKey;
 
 fn main() {
     match TcpStream::connect("127.0.0.1:7878") {
@@ -23,27 +25,41 @@ fn main() {
 
             stream.write_all(format!("{}\n{}",username.trim(), pubkey_pem).as_bytes()).unwrap();
 
-            // phuoc: Read the pubkey list from PKkeys.txt
-            let (ids, pubkeys) = read_pubkey_list("PKKeys.txt").unwrap();
-            println!("Downloaded the pubkey list!");
-            ////////
-            
-            // Read the users list from UserKeys.txt
-            let (existed_users, existed_pubkeys) = read_pubkey_list("UserKeys.txt").unwrap();
-            println!("Downloaded the users list!");
+            // phuoc: Read the pubkey list from PKkeys.txt //eileen: read and add to a hashmap for easier/faster use later
+            let (server_PKs, server_pubkeys) = read_pubkey_list("PKKeys.txt").expect("Failed to read server public keys from PKKeys.txt");
+            println!("Loaded server public keys from PKKeys.txt");
+
+            // Step 3: Load existing users and their public keys from UserKeys.txt into HashMap
+            let (usernames, user_pubkeys) = read_pubkey_list("UserKeys.txt").expect("Failed to read user public keys from UserKeys.txt");
+            let mut existing_users: HashMap<String, RsaPublicKey> = usernames.into_iter().zip(user_pubkeys.into_iter()).collect();
+            println!("Loaded existing user public keys from UserKeys.txt");
 
             // Spawn a thread to listen for incoming messages
             let mut read_stream = stream.try_clone().unwrap();
             thread::spawn(move || {
-                // TODO: Add something so that the listener knows when a new user has joined
                 let mut buffer = [0; 512];
-                while match read_stream.read(&mut buffer) {
-                    Ok(size) if size > 0 => {
-                        println!("Received: {}", String::from_utf8_lossy(&buffer[..size]));
-                        true
+                while let Ok(size) = read_stream.read(&mut buffer) {
+                    if size == 0 {
+                        break;
                     }
-                    Ok(_) | Err(_) => false,
-                } {}
+                    let received_message = String::from_utf8_lossy(&buffer[..size]);
+                    // eileen: check if the incoming message is a broadcast of new user PK 
+                    // if so then add to existing_users hashmap.
+                    // Check if the received message is a broadcast for a new user
+                    if let Some((new_username, new_pubkey_pem)) = parse_new_user_broadcast(&received_message) {
+                        match RsaPublicKey::from_pkcs1_pem(&new_pubkey_pem) {
+                            Ok(new_pubkey) => {
+                                // Add new user and their public key to existed_users HashMap
+                                existing_users.insert(new_username.clone(), new_pubkey);
+                                println!("Updated users: Added new user {} with public key to internal hashmap.", new_username);
+                            },
+                            Err(e) => println!("Failed to decode public key: {}", e),
+                        }
+                    } else {
+                        // Handle other messages normally
+                        println!("Received: {}", received_message);
+                    }
+                }
             });
 
             // Send messages in the main thread
@@ -51,9 +67,23 @@ fn main() {
                 println!("Enter recipient:");
                 let mut recipient = String::new();
                 io::stdin().read_line(&mut recipient).unwrap();
+                let recipient = recipient.trim().to_string();
+
+                println!("Enter your message:");
+                let mut message = String::new();
+                io::stdin().read_line(&mut message).unwrap();
+                let message = message.trim().to_string();
+
+                // Construct the message in the format "recipient: message"
+                let formatted_message = format!("{}: {}", recipient, message);
+
+                // Send the message to the server
+                stream.write_all(formatted_message.as_bytes()).unwrap();
+                
+                //TO DO LATER: add in random path and encryption
                 // Now we need to sample a random path and encrypt the message
-                let (mut random_ids, mut random_pubkeys) = sample_random_path(3, &ids, &pubkeys).unwrap(); // Currently I set the path length to be 3
-                random_ids.push(recipient);
+                // let (mut random_ids, mut random_pubkeys) = sample_random_path(3, &server_PKs, &existed_users).unwrap(); // Currently I set the path length to be 3
+                // random_ids.push(recipient);
                 // TODO: How do we update the existed users list here, and how to efficiently find the matching pubkey?
                 
                 // stream.write_all(message.as_bytes()).unwrap();
@@ -62,5 +92,17 @@ fn main() {
         Err(e) => {
             println!("Failed to connect: {}", e);
         }
+    }
+}
+
+// eileen: helper function to parse new user broadcast messages
+fn parse_new_user_broadcast(message: &str) -> Option<(String, String)> {
+    let mut lines = message.lines();
+    let username = lines.next()?.to_string();
+    let pubkey_pem = lines.collect::<Vec<_>>().join("\n");
+    if pubkey_pem.contains("BEGIN RSA PUBLIC KEY") {
+        Some((username, pubkey_pem))
+    } else {
+        None
     }
 }

@@ -9,7 +9,18 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::thread;
 
-fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpStream>>>) {
+// Structure to hold user data (username and public key)
+struct ClientData {
+    username: String,
+    pubkey: RsaPublicKey,
+}
+
+// Updated handle_client function with a HashMap to store client data
+fn handle_client(
+    mut stream: TcpStream,
+    clients: Arc<Mutex<HashMap<String, TcpStream>>>,
+    existing_users: Arc<Mutex<HashMap<String, RsaPublicKey>>>,
+) {
     let mut buffer = [0; 512];
 
     //step 1: receive and store  username for this client, trim null characters
@@ -22,7 +33,6 @@ fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpSt
     // TODO: Add error checking here
 
     let mut lines = username_and_pem.lines();
-
     let username = lines.next().unwrap().to_string();
 
     // Every other lines join together to create a PEM
@@ -37,24 +47,43 @@ fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpSt
         Err(e) => eprintln!("Error adding user to list of existing users: {}", e),
     };
 
+    // Broadcast new user's username and public key to all clients
     {
-        // Lock Clients list, send the new pubkey to every clients
         let clients = clients.lock().unwrap();
+        let broadcast_message = format!("{}\n{}", username, pem);
         for (recipient, mut recipient_stream) in clients.iter() {
             println!("Broadcasting new key to {}", recipient);
-            recipient_stream.write_all(username_and_pem.as_bytes()).unwrap();
+            recipient_stream.write_all(broadcast_message.as_bytes()).unwrap();
         }
     }
 
-    //step 2: add client to  HashMap and confirm addition
+    // {
+    //     // Lock Clients list, send the new pubkey to every clients
+    //     let clients = clients.lock().unwrap();
+    //     for (recipient, mut recipient_stream) in clients.iter() {
+    //         println!("Broadcasting new key to {}", recipient);
+    //         recipient_stream.write_all(username_and_pem.as_bytes()).unwrap();
+    //     }
+    // }
+
+    // //step 2: add client to  HashMap and confirm addition
+    // {
+    //     let mut clients = clients.lock().unwrap();
+    //     clients.insert(username.clone(), stream.try_clone().unwrap());
+    //     println!("Current users: {:?}", clients.keys().collect::<Vec<_>>());
+    // }
+
+    // Step 2: Add client to the clients HashMap and store the public key in existing_users
     {
         let mut clients = clients.lock().unwrap();
+        let mut users = existing_users.lock().unwrap();
         clients.insert(username.clone(), stream.try_clone().unwrap());
+        users.insert(username.clone(), pubkey);
         println!("Current users: {:?}", clients.keys().collect::<Vec<_>>());
     }
 
+    // Step 3: Listen for messages from the client
     loop {
-        //step 3: Listen for messages
         let size = match stream.read(&mut buffer) {
             Ok(size) if size > 0 => size,
             _ => break,
@@ -79,23 +108,30 @@ fn handle_client(mut stream: TcpStream, clients: Arc<Mutex<HashMap<String, TcpSt
         }
     }
 
-    //remove client from list on disconnect
+    //remove client from list on disconnect (eileen edit remove from client and users hashmap)
     {
         let mut clients = clients.lock().unwrap();
+        let mut users = existing_users.lock().unwrap();
         clients.remove(&username);
-        println!("User '{}' disconnected. Remaining users: {:?}", username, clients.keys().collect::<Vec<_>>());
+        users.remove(&username);
+        println!(
+            "User '{}' disconnected. Remaining users: {:?}",
+            username,
+            clients.keys().collect::<Vec<_>>()
+        );
     }
 }
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
     let clients = Arc::new(Mutex::new(HashMap::new()));
+    let existing_users = Arc::new(Mutex::new(HashMap::new()));
 
     // phuoc: generate public keys, private keys and write to PKKeys.txt
     println!("Enter the number of intermediate clients: ");
     let mut input_string = String::new();
     io::stdin().read_line(&mut input_string).unwrap();
-    let n: usize = input_string.trim().parse().expect("Expect a positive integer!");
+    let n: usize = input_string.trim().parse().expect("Expected a positive integer!");
     let (ids, seckeys, pubkeys) = generate_pubkey_list(n);
 
     match dump_pubkey_list(&ids, &pubkeys, "PKKeys.txt") {
@@ -104,11 +140,20 @@ fn main() {
     };
     //////
     
-    // phuoc: reset users list
+    // phuoc: reset users list in UserKeys.txt
     match reset_user_list("UserKeys.txt") {
         Ok(_) => println!("Reseted the list in UserKeys.txt!"),
         Err(e) => eprintln!("Failed to reset UserKeys.txt: {}", e),
     };
+
+    // Step 2: Load server public keys from PKKeys.txt into existing_users HashMap
+    {
+        let mut users = existing_users.lock().unwrap();
+        for (id, pubkey) in ids.iter().zip(pubkeys.iter()) {
+            users.insert(id.clone(), pubkey.clone());
+        }
+        println!("Loaded server public keys into existing_users.");
+    }
 
 
     println!("Server listening on port 7878");
@@ -117,8 +162,9 @@ fn main() {
         match stream {
             Ok(stream) => {
                 let clients_clone = Arc::clone(&clients);
+                let users_clone = Arc::clone(&existing_users);
                 thread::spawn(move || {
-                    handle_client(stream, clients_clone);
+                    handle_client(stream, clients_clone, users_clone);
                 });
             }
             Err(e) => {
