@@ -6,8 +6,15 @@ use std::io::{self, Write, Read};
 use std::thread;
 use crypto::{read_pubkey_list, sample_random_path, generate_pubkey};
 use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey, LineEnding};
+use rsa::{RsaPrivateKey, RsaPublicKey, Pkcs1v15Encrypt}; 
 use std::collections::HashMap;
-use rsa::RsaPublicKey;
+use rand::seq::SliceRandom; 
+use rand::Rng; 
+use aes_gcm::{
+    aead::{Aead, NewAead},
+    Aes256Gcm, Key, Nonce
+}; 
+use base64::Engine;  // Make sure to import GenericArray
 
 fn main() {
     match TcpStream::connect("127.0.0.1:7878") {
@@ -25,7 +32,8 @@ fn main() {
 
             stream.write_all(format!("{}\n{}",username.trim(), pubkey_pem).as_bytes()).unwrap();
 
-            // phuoc: Read the pubkey list from PKkeys.txt //eileen: read and add to a hashmap for easier/faster use later
+            // phuoc: Read the pubkey list from PKkeys.txt 
+            //eileen: read and add to a hashmap for easier/faster use later
             let (server_PKs, server_pubkeys) = read_pubkey_list("PKKeys.txt").expect("Failed to read server public keys from PKKeys.txt");
             println!("Loaded server public keys from PKKeys.txt");
 
@@ -74,11 +82,48 @@ fn main() {
                 io::stdin().read_line(&mut message).unwrap();
                 let message = message.trim().to_string();
 
-                // Construct the message in the format "recipient: message"
-                let formatted_message = format!("{}: {}", recipient, message);
+                // eileen: implement onion encryption using symmetric and PK encryption 
+                // sample set of intermediary nodes to route message through setting this to be at least three (for now)
+                let mut rng = rand::thread_rng();
+                let random_ids: Vec<usize> = (0..server_PKs.len()).collect();
+                let selected_ids: Vec<usize> = random_ids.choose_multiple(&mut rng, 3).cloned().collect();
+                println!("This is my routing path node IDs: {:?}", selected_ids);
+                // Prepare the message for onion encryption
+                let mut enc_layers = Vec::new();
+                let mut encrypted_message = message.clone();
+                
+                // Encrypt the message through the selected server public keys
+                for id in selected_ids.iter().rev() {
+                    let server_pubkey = &server_pubkeys[*id]; // Get the selected server public key
 
-                // Send the message to the server
-                stream.write_all(formatted_message.as_bytes()).unwrap();
+                    // Generate a random symmetric key for this layer
+                    // Generate a random symmetric key for AES-GCM encryption
+                    // In the message encryption part, adjust the AES-GCM key generation:
+                    
+                    let sym_key = Aes256Gcm::generate_key(&mut rng); // Create a 256-bit key
+                    let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key)); // Use the key
+                    let nonce = Nonce::from_slice(&[0; 12]);
+
+                    // Encrypt the message with the symmetric key
+                    let ciphertext: Vec<u8> = aes_gcm.encrypt(nonce, encrypted_message.as_bytes()).expect("encryption failure!");
+                    
+                    // Encrypt the symmetric key with the server's public key using PKCS#1 v1.5 padding
+                    let enc_sym_key = server_pubkey
+                        .encrypt(&mut rng, Pkcs1v15Encrypt, &sym_key)
+                        .expect("failed to encrypt symmetric key");
+
+                    // Store the encrypted symmetric key and the ciphertext
+                    enc_layers.push((enc_sym_key, ciphertext.clone())); 
+
+                    // Set the next layer's message as the ciphertext (Base64 encoded)
+                    encrypted_message = base64::engine::general_purpose::STANDARD.encode(&ciphertext);
+
+                }
+
+                // Send the final encrypted message and the selected server IDs to the server
+                let final_message = format!("{}|{}\n", encrypted_message, selected_ids.iter().map(|id| (id + 1).to_string()).collect::<Vec<String>>().join(","));
+                stream.write_all(final_message.as_bytes()).unwrap();
+                
                 
                 //TO DO LATER: add in random path and encryption
                 // Now we need to sample a random path and encrypt the message
