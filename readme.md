@@ -18,3 +18,5 @@ part 2
 - implemented client functionality to sample a random path of intermediary nodes
 - client will onion encrypt with their chosen path
 - client sends path and onion encrypted message to the server
+- also included recipient in onion encryption so intermediary nodes know who is next
+- fix lock/mutex bugs
