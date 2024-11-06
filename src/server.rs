@@ -2,76 +2,51 @@ extern crate rsa;
 mod crypto;
 
 use crypto::{generate_pubkey_list, dump_pubkey_list, reset_user_list, update_user_list};
-use rsa::{RsaPublicKey, pkcs1::DecodeRsaPublicKey};
+use rsa::{RsaPublicKey, pkcs1::DecodeRsaPublicKey, RsaPrivateKey, Pkcs1v15Encrypt};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::thread;
+use aes_gcm::{Aes256Gcm, Key, Nonce}; // Ensure you have aes-gcm in your Cargo.toml
+use rand::Rng;
 
-// Structure to hold user data (username and public key)
-struct ClientData {
-    username: String,
-    pubkey: RsaPublicKey,
-}
-
-// Updated handle_client function with a HashMap to store client data
 fn handle_client(
     mut stream: TcpStream,
     clients: Arc<Mutex<HashMap<String, TcpStream>>>,
     existing_users: Arc<Mutex<HashMap<String, RsaPublicKey>>>,
+    seckeys: Arc<Mutex<HashMap<usize, RsaPrivateKey>>>, // Server's private keys for decryption
 ) {
     let mut buffer = [0; 512];
 
-    //step 1: receive and store  username for this client, trim null characters
+    // Step 1: Receive and store the username for this client
     stream.read(&mut buffer).unwrap();
     let username_and_pem = String::from_utf8_lossy(&buffer[..])
         .trim_matches(char::from(0))
         .trim()
         .to_string();
-
-    // TODO: Add error checking here
-
+    
     let mut lines = username_and_pem.lines();
     let username = lines.next().unwrap().to_string();
-
-    // Every other lines join together to create a PEM
     let pem = lines.collect::<Vec<&str>>().join("\n");
     let pubkey = RsaPublicKey::from_pkcs1_pem(&pem).expect("Failed to parse public key from PEM");
 
     println!("User '{}' connected.", username);
-    println!("PEM:{}", pem);
 
+    // Add user to the list
     match update_user_list("UserKeys.txt", &username, &pubkey) {
         Ok(_) => println!("Added user to list of existing users!"),
         Err(e) => eprintln!("Error adding user to list of existing users: {}", e),
     };
 
-    // Broadcast new user's username and public key to all clients
+    // Broadcast the new user's username and public key to all clients
     {
         let clients = clients.lock().unwrap();
         let broadcast_message = format!("{}\n{}", username, pem);
         for (recipient, mut recipient_stream) in clients.iter() {
-            println!("Broadcasting new key to {}", recipient);
             recipient_stream.write_all(broadcast_message.as_bytes()).unwrap();
         }
     }
-
-    // {
-    //     // Lock Clients list, send the new pubkey to every clients
-    //     let clients = clients.lock().unwrap();
-    //     for (recipient, mut recipient_stream) in clients.iter() {
-    //         println!("Broadcasting new key to {}", recipient);
-    //         recipient_stream.write_all(username_and_pem.as_bytes()).unwrap();
-    //     }
-    // }
-
-    // //step 2: add client to  HashMap and confirm addition
-    // {
-    //     let mut clients = clients.lock().unwrap();
-    //     clients.insert(username.clone(), stream.try_clone().unwrap());
-    //     println!("Current users: {:?}", clients.keys().collect::<Vec<_>>());
-    // }
 
     // Step 2: Add client to the clients HashMap and store the public key in existing_users
     {
@@ -89,36 +64,68 @@ fn handle_client(
             _ => break,
         };
 
-        //parse message in format "recipient: message"
+        // Parse message format "encrypted_message|first_node_id"
         let message = String::from_utf8_lossy(&buffer[..size]).to_string();
-        let parts: Vec<&str> = message.splitn(2, ": ").collect();
+        let parts: Vec<&str> = message.splitn(2, "|").collect();
 
         if parts.len() == 2 {
-            let recipient = parts[0].trim().to_string();
-            let message_content = format!("{}: {}", username, parts[1]);
+            let encrypted_message = parts[0].to_string();
+            let first_node_id: usize = parts[1].trim().parse().expect("Failed to parse node ID");
 
-            //lock HashMap before trying to send the message
+            // Decrypt the message using onion decryption
+            let mut decrypted_message = encrypted_message.clone();
+            let mut layer_data = Vec::new(); // Store the encrypted layers (symmetric keys and ciphertext)
+
+            // Get the public keys for the intermediary nodes
+            let users = existing_users.lock().unwrap();
+            let mut current_encrypted_message = encrypted_message.clone();
+            let mut node_id = first_node_id;
+
+            // Step 4: Process each onion layer (decrypt using server's private key)
+            while node_id > 0 {
+                let server_private_key = seckeys.lock().unwrap().get(&(node_id - 1)).expect("No private key for node");
+
+                // Parse the encrypted symmetric key and ciphertext
+                let (enc_sym_key, encrypted_ciphertext) = layer_data.pop().unwrap();
+
+                // Decrypt the symmetric key using the server's private key
+                let sym_key: Vec<u8> = server_private_key
+                    .decrypt(Pkcs1v15Encrypt, &enc_sym_key)
+                    .expect("Failed to decrypt symmetric key");
+
+                // Decrypt the ciphertext using the symmetric key
+                let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key));
+                let nonce = Nonce::from_slice(&[0; 12]);
+                let ciphertext = base64::decode(&encrypted_ciphertext).expect("Failed to decode ciphertext");
+
+                let decrypted_data = aes_gcm.decrypt(&nonce, ciphertext.as_ref())
+                    .expect("Decryption failure");
+
+                // Continue passing the decrypted message
+                current_encrypted_message = String::from_utf8(decrypted_data).expect("Failed to decode decrypted message");
+
+                // Get the next node ID
+                node_id -= 1;
+            }
+
+            // At the end, current_encrypted_message should hold the final plaintext message
+            let decrypted_message = current_encrypted_message;
+
+            // Send the decrypted message to the intended recipient
             let clients = clients.lock().unwrap();
-            if let Some(mut recipient_stream) = clients.get(&recipient) {
-                println!("Sending message to '{}': {}", recipient, message_content);
-                recipient_stream.write_all(message_content.as_bytes()).unwrap();
-            } else {
-                println!("User '{}' not found.", recipient);
+            if let Some(mut recipient_stream) = clients.get(&username) {
+                recipient_stream.write_all(decrypted_message.as_bytes()).unwrap();
             }
         }
     }
 
-    //remove client from list on disconnect (eileen edit remove from client and users hashmap)
+    // Remove client from the list on disconnect
     {
         let mut clients = clients.lock().unwrap();
         let mut users = existing_users.lock().unwrap();
         clients.remove(&username);
         users.remove(&username);
-        println!(
-            "User '{}' disconnected. Remaining users: {:?}",
-            username,
-            clients.keys().collect::<Vec<_>>()
-        );
+        println!("User '{}' disconnected. Remaining users: {:?}", username, clients.keys().collect::<Vec<_>>());
     }
 }
 
@@ -126,35 +133,39 @@ fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
     let clients = Arc::new(Mutex::new(HashMap::new()));
     let existing_users = Arc::new(Mutex::new(HashMap::new()));
+    let seckeys = Arc::new(Mutex::new(HashMap::new())); // To store server's private keys
 
-    // phuoc: generate public keys, private keys and write to PKKeys.txt
+    // Generate keys and save them
     println!("Enter the number of intermediate clients: ");
     let mut input_string = String::new();
     io::stdin().read_line(&mut input_string).unwrap();
     let n: usize = input_string.trim().parse().expect("Expected a positive integer!");
-    let (ids, seckeys, pubkeys) = generate_pubkey_list(n);
+    let (ids, seckeys_vec, pubkeys) = generate_pubkey_list(n);
 
     match dump_pubkey_list(&ids, &pubkeys, "PKKeys.txt") {
         Ok(_) => println!("Successfully written pseudo keys to PKKeys.txt!"),
         Err(e) => eprintln!("Failed to write to PKKeys.txt: {}", e),
     };
-    //////
-    
-    // phuoc: reset users list in UserKeys.txt
+
+    // Reset the user list
     match reset_user_list("UserKeys.txt") {
-        Ok(_) => println!("Reseted the list in UserKeys.txt!"),
+        Ok(_) => println!("Reset the list in UserKeys.txt!"),
         Err(e) => eprintln!("Failed to reset UserKeys.txt: {}", e),
     };
 
-    // Step 2: Load server public keys from PKKeys.txt into existing_users HashMap
+    // Step 2: Load server public keys and private keys
     {
         let mut users = existing_users.lock().unwrap();
+        let mut sec_keys = seckeys.lock().unwrap();
+
         for (id, pubkey) in ids.iter().zip(pubkeys.iter()) {
             users.insert(id.clone(), pubkey.clone());
         }
-        println!("Loaded server public keys into existing_users.");
+        for (id, privkey) in ids.iter().zip(seckeys_vec.iter()) {
+            sec_keys.insert(id.clone(), privkey.clone());
+        }
+        println!("Loaded server public keys and private keys.");
     }
-
 
     println!("Server listening on port 7878");
 
@@ -163,8 +174,9 @@ fn main() {
             Ok(stream) => {
                 let clients_clone = Arc::clone(&clients);
                 let users_clone = Arc::clone(&existing_users);
+                let seckeys_clone = Arc::clone(&seckeys);
                 thread::spawn(move || {
-                    handle_client(stream, clients_clone, users_clone);
+                    handle_client(stream, clients_clone, users_clone, seckeys_clone);
                 });
             }
             Err(e) => {
