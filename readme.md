@@ -20,3 +20,25 @@ part 2
 - client sends path and onion encrypted message to the server
 - also included recipient in onion encryption so intermediary nodes know who is next
 - fix lock/mutex bugs
+
+part 3
+- going to hardcode the list of intermediary nodes that the client chooses to onion encrytp
+- use only three for now
+- fix server.rs code and client.rs code
+
+
+
+NEXT STEPS:
+
+1. fix bugs in server/client.rs code (hardcode to three intermediary nodes)
+2. bruisable onion encryption scheme
+    - add metadata (role, y, index?) into onion ciphertext
+    - add sepal layers to the onion
+    - add roles (and define their functionality: gatekeepers vs mixers)
+    - peel and bruise onion functionality
+4. add the hashes of the sepal layers (tricky) use SHA256
+5. tagged encryption to only allow nodes to decrypt if correct sepal layers exist
+6. Undo hardcoded sections and implement loops and randomized paths
+7. Add checkpoint onions & move Onion into a seperate class
+8. Think about the network
+

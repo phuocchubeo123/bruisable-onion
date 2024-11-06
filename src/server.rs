@@ -18,7 +18,7 @@ fn handle_client(
     mut stream: TcpStream,
     clients: Arc<Mutex<HashMap<String, TcpStream>>>,
     existing_users: Arc<Mutex<HashMap<String, RsaPublicKey>>>,
-    seckeys: Arc<Mutex<HashMap<usize, RsaPrivateKey>>>, // Server's private keys for decryption
+    seckeys: Arc<Mutex<HashMap<String, RsaPrivateKey>>>, // Server's private keys for decryption
 ) {
     let mut buffer = [0; 512];
 

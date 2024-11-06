@@ -95,7 +95,9 @@ fn main() {
                 let random_ids: Vec<usize> = (0..server_pubkeys.len()).collect();
                 let selected_ids: Vec<usize> = random_ids.choose_multiple(&mut rng, 3).cloned().collect();
                 println!("Routing path node IDs: {:?}", selected_ids);
-            
+                
+                // NEED TO FIX HARDCODE SOME NODES THAT THE CLIENT CHOOSES
+
                 // encrypt the initial message with a symmetric key for the recipient
                 let recipient_pubkey = match existing_users.lock().unwrap().get(&recipient) {
                     Some(key) => key.clone(),
