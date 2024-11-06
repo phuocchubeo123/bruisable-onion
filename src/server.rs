@@ -8,8 +8,11 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::thread;
-use aes_gcm::{Aes256Gcm, Key, Nonce}; // Ensure you have aes-gcm in your Cargo.toml
+use aes_gcm::{Aes256Gcm, Key, Nonce}; 
+use aes_gcm::aead::{Aead, NewAead};
 use rand::Rng;
+use base64::engine::general_purpose;
+use base64::Engine;
 
 fn handle_client(
     mut stream: TcpStream,
@@ -57,67 +60,85 @@ fn handle_client(
         println!("Current users: {:?}", clients.keys().collect::<Vec<_>>());
     }
 
-    // Step 3: Listen for messages from the client
-    loop {
-        let size = match stream.read(&mut buffer) {
-            Ok(size) if size > 0 => size,
-            _ => break,
-        };
+// Step 3: Listen for messages from the client
+loop {
+    let size = match stream.read(&mut buffer) {
+        Ok(size) if size > 0 => size,
+        _ => break,
+    };
 
-        // Parse message format "encrypted_message|first_node_id"
-        let message = String::from_utf8_lossy(&buffer[..size]).to_string();
-        let parts: Vec<&str> = message.splitn(2, "|").collect();
+    // Parse message format "encrypted_message|first_node_id"
+    let message = String::from_utf8_lossy(&buffer[..size]).to_string();
+    let parts: Vec<&str> = message.splitn(2, "|").collect();
 
-        if parts.len() == 2 {
-            let encrypted_message = parts[0].to_string();
-            let first_node_id: usize = parts[1].trim().parse().expect("Failed to parse node ID");
+    if parts.len() == 2 {
+        let encrypted_message = parts[0].to_string();
+        let mut node_id: usize = parts[1].trim().parse().expect("Failed to parse node ID");
 
-            // Decrypt the message using onion decryption
-            let mut decrypted_message = encrypted_message.clone();
-            let mut layer_data = Vec::new(); // Store the encrypted layers (symmetric keys and ciphertext)
+        // Initialize current layer to the received encrypted message
+        let mut current_encrypted_layer = encrypted_message;
 
-            // Get the public keys for the intermediary nodes
-            let users = existing_users.lock().unwrap();
-            let mut current_encrypted_message = encrypted_message.clone();
-            let mut node_id = first_node_id;
+        // Step 4: Process each onion layer (decrypt using server's private key)
+        while node_id > 0 {
+            let seckeys_locked = seckeys.lock().unwrap();
+            // Retrieve the server's private key for the current node
+            let server_private_key = seckeys_locked.get(&node_id).expect("No private key for node");
 
-            // Step 4: Process each onion layer (decrypt using server's private key)
-            while node_id > 0 {
-                let server_private_key = seckeys.lock().unwrap().get(&(node_id - 1)).expect("No private key for node");
-
-                // Parse the encrypted symmetric key and ciphertext
-                let (enc_sym_key, encrypted_ciphertext) = layer_data.pop().unwrap();
-
-                // Decrypt the symmetric key using the server's private key
-                let sym_key: Vec<u8> = server_private_key
-                    .decrypt(Pkcs1v15Encrypt, &enc_sym_key)
-                    .expect("Failed to decrypt symmetric key");
-
-                // Decrypt the ciphertext using the symmetric key
-                let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key));
-                let nonce = Nonce::from_slice(&[0; 12]);
-                let ciphertext = base64::decode(&encrypted_ciphertext).expect("Failed to decode ciphertext");
-
-                let decrypted_data = aes_gcm.decrypt(&nonce, ciphertext.as_ref())
-                    .expect("Decryption failure");
-
-                // Continue passing the decrypted message
-                current_encrypted_message = String::from_utf8(decrypted_data).expect("Failed to decode decrypted message");
-
-                // Get the next node ID
-                node_id -= 1;
+            // Parse the encrypted symmetric key and payload from the current layer
+            let layer_parts: Vec<&str> = current_encrypted_layer.splitn(2, "|").collect();
+            if layer_parts.len() != 2 {
+                eprintln!("Invalid layer format");
+                break;
             }
 
-            // At the end, current_encrypted_message should hold the final plaintext message
-            let decrypted_message = current_encrypted_message;
+            let enc_sym_key = general_purpose::STANDARD
+            .decode(layer_parts[0])
+            .expect("Failed to decode encrypted symmetric key");
 
-            // Send the decrypted message to the intended recipient
-            let clients = clients.lock().unwrap();
-            if let Some(mut recipient_stream) = clients.get(&username) {
-                recipient_stream.write_all(decrypted_message.as_bytes()).unwrap();
+            let enc_payload = general_purpose::STANDARD
+            .decode(layer_parts[1])
+            .expect("Failed to decode encrypted payload");
+
+            // Decrypt the symmetric key using the server's private key
+            let sym_key = server_private_key
+                .decrypt(Pkcs1v15Encrypt, &enc_sym_key)
+                .expect("Failed to decrypt symmetric key");
+
+            // initialize AES-GCM with the decrypted symmetric key
+            let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key));
+            let nonce = Nonce::from_slice(&[0; 12]);
+
+            // Decrypt the payload to obtain the next layer or final message
+            let decrypted_data = aes_gcm
+                .decrypt(nonce, enc_payload.as_ref())
+                .expect("Decryption failure");
+
+            // Convert decrypted data to a string to check for the next node
+            let decrypted_str = String::from_utf8(decrypted_data).expect("Failed to decode decrypted layer");
+
+            // Separate next node ID and the inner layer
+            let payload_parts: Vec<&str> = decrypted_str.splitn(2, "|").collect();
+            if payload_parts.len() != 2 {
+                eprintln!("Invalid payload format");
+                break;
             }
+
+            // Extract the next node ID and the next encrypted layer
+            node_id = payload_parts[0].parse::<usize>().expect("Failed to parse node ID");
+            current_encrypted_layer = payload_parts[1].to_string();
+        }
+
+        // At this point, `current_encrypted_layer` holds the final encrypted message for the recipient
+        let final_encrypted_message = current_encrypted_layer;
+
+        // Forward the encrypted message to the intended recipient (additional decryption will be needed by recipient)
+        let clients = clients.lock().unwrap();
+        if let Some(mut recipient_stream) = clients.get(&username) {
+            recipient_stream.write_all(final_encrypted_message.as_bytes()).unwrap();
         }
     }
+}
+
 
     // Remove client from the list on disconnect
     {
@@ -133,7 +154,8 @@ fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
     let clients = Arc::new(Mutex::new(HashMap::new()));
     let existing_users = Arc::new(Mutex::new(HashMap::new()));
-    let seckeys = Arc::new(Mutex::new(HashMap::new())); // To store server's private keys
+    let seckeys: Arc<Mutex<HashMap<usize, RsaPrivateKey>>> = Arc::new(Mutex::new(HashMap::new()));
+
 
     // Generate keys and save them
     println!("Enter the number of intermediate clients: ");
@@ -162,7 +184,7 @@ fn main() {
             users.insert(id.clone(), pubkey.clone());
         }
         for (id, privkey) in ids.iter().zip(seckeys_vec.iter()) {
-            sec_keys.insert(id.clone(), privkey.clone());
+            sec_keys.insert(*id, privkey.clone());
         }
         println!("Loaded server public keys and private keys.");
     }
@@ -174,7 +196,8 @@ fn main() {
             Ok(stream) => {
                 let clients_clone = Arc::clone(&clients);
                 let users_clone = Arc::clone(&existing_users);
-                let seckeys_clone = Arc::clone(&seckeys);
+                let seckeys_clone: Arc<Mutex<HashMap<usize, RsaPrivateKey>>> = Arc::clone(&seckeys);
+
                 thread::spawn(move || {
                     handle_client(stream, clients_clone, users_clone, seckeys_clone);
                 });
