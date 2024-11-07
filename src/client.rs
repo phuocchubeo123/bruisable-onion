@@ -5,20 +5,18 @@ use std::net::TcpStream;
 use std::io::{self, Write, Read};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use crypto::{read_pubkey_list, sample_random_path, generate_pubkey};
+use crypto::{read_pubkey_list, generate_pubkey};
 use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey, LineEnding};
-use rsa::{RsaPrivateKey, RsaPublicKey, Pkcs1v15Encrypt}; 
+use rsa::{RsaPublicKey, Pkcs1v15Encrypt}; 
 use std::collections::HashMap;
-use rand::seq::SliceRandom; 
-use rand::Rng; 
-use base64::engine::general_purpose;
+use base64::{engine::general_purpose::STANDARD, Engine};
+use rand::rngs::OsRng;
 use aes_gcm::{
     aead::{Aead, NewAead},
     Aes256Gcm, Key, Nonce
 }; 
-use base64::Engine;
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     match TcpStream::connect("127.0.0.1:7878") {
         Ok(mut stream) => {
             println!("Successfully connected to server on port 7878");
@@ -35,10 +33,15 @@ fn main() {
 
             // phuoc: Read the pubkey list from PKkeys.txt 
             //eileen: read and add to a hashmap for easier/faster use later
-            let (server_PKs, server_pubkeys) = read_pubkey_list("PKKeys.txt").expect("Failed to read server public keys from PKKeys.txt");
+            let (server_ids, server_pubkeys) = read_pubkey_list("PKKeys.txt").expect("Failed to read server public keys from PKKeys.txt");
+
+            // create HashMap for server nodes (server ID -> public key)
+            let server_nodes = Arc::new(Mutex::new(
+                server_ids.into_iter().zip(server_pubkeys.into_iter()).collect::<HashMap<String, RsaPublicKey>>(),
+            ));
             println!("Loaded server public keys from PKKeys.txt");
 
-            // Step 3: Load existing users and their public keys from UserKeys.txt into HashMap
+            // load existing users and their public keys from UserKeys.txt into HashMap
             let (usernames, user_pubkeys) = read_pubkey_list("UserKeys.txt").expect("Failed to read user public keys from UserKeys.txt");
             // Wrap existing_users in an Arc<Mutex<...>> for thread-safe access
             let existing_users = Arc::new(Mutex::new(
@@ -53,32 +56,83 @@ fn main() {
             
             thread::spawn(move || {
                 let mut buffer = [0; 512];
-                // Lock the mutex once, and keep the lock while processing messages
-                let mut users_lock = existing_users_thread.lock().unwrap();
-            
+                // ensure there is something to fetch from buffer
                 while let Ok(size) = read_stream.read(&mut buffer) {
                     if size == 0 {
                         break;
                     }
             
                     let received_message = String::from_utf8_lossy(&buffer[..size]);
-            
+
+                    // eileen step 1: check if the message is new user broadcast
                     if let Some((new_username, new_pubkey_pem)) = parse_new_user_broadcast(&received_message) {
                         match RsaPublicKey::from_pkcs1_pem(&new_pubkey_pem) {
                             Ok(new_pubkey) => {
-                                // Insert new user into the existing_users HashMap
+                                // insert new user into the existing_users HashMap
+                                let mut users_lock = existing_users_thread.lock().unwrap();
                                 users_lock.insert(new_username.clone(), new_pubkey);
                                 println!("Added new user {} with public key", new_username);
                             },
-                            Err(e) => println!("Failed to decode public key: {}", e),
+                            Err(e) => {
+                                eprintln!("Failed to decode public key for {}: {}", new_username, e);
+                            }
                         }
                     } else {
-                        println!("Received: {}", received_message);
+                        // eileen step 2: else it is a regular ciphertext (last layer of the onion)
+                        // eileen comments on current implementation and next steps:
+                        // split received message format: Recipient_ID|Enc_R_PK(sym_K4)|Enc_symK4(message)
+                        // using index 4 here because we are using three intermediary nodes, so the recipient will have index 4
+                        // later we will add these indexes into the metadata of the onion, specifically in the part encrypted with the public key
+                        // for now this only includes the current symmetric key for the node
+                        let parts: Vec<&str> = received_message.split('|').collect();
+
+                        if parts.len() == 3 {
+                            let recipient_id = parts[0];
+                            let enc_sym_key4 = parts[1];
+                            let encrypted_message = parts[2];
+
+                            // check if this message is for this client (by comparing recipient_id to username)
+                            if recipient_id == username.trim() {
+                                // step 3: decode and decrypt symmetric key with the private key
+                                match STANDARD.decode(enc_sym_key4) {
+                                    Ok(enc_sym_key_bytes) => {
+                                        match personal_seckey.decrypt(Pkcs1v15Encrypt, &enc_sym_key_bytes) {
+                                            Ok(sym_key4) => {
+                                                // step 4: use the symmetric key to decrypt the message
+                                                let aes_gcm4 = Aes256Gcm::new(Key::from_slice(&sym_key4));
+                                                let nonce4 = Nonce::from_slice(&[0; 12]); // Same nonce as used in encryption
+
+                                                // decode encrypted message and do error checking
+                                                match STANDARD.decode(encrypted_message) {
+                                                    Ok(encrypted_message_bytes) => {
+                                                        match aes_gcm4.decrypt(nonce4, encrypted_message_bytes.as_ref()) {
+                                                            Ok(decrypted_message) => {
+                                                                // convert decrypted message to string and print
+                                                                let message_text = String::from_utf8_lossy(&decrypted_message);
+                                                                println!("Decrypted message: {}", message_text);
+                                                            },
+                                                            Err(e) => eprintln!("Failed to decrypt message: {}", e),
+                                                        }
+                                                    },
+                                                    Err(e) => eprintln!("Failed to decode encrypted message: {}", e),
+                                                }
+                                            },
+                                            Err(e) => eprintln!("Failed to decrypt symmetric key: {}", e),
+                                        }
+                                    },
+                                    Err(e) => eprintln!("Failed to decode encrypted symmetric key: {}", e),
+                                }
+                            } else {
+                                println!("Received: {}", received_message);
+                            }
+                        } else {
+                            println!("Received: {}", received_message); 
+                        }
                     }
                 }
             });
             
-            // main thread loop for sending messages
+            // eileen edits to main thread loop for sending messages
             loop {
                 println!("Enter recipient:");
                 let mut recipient = String::new();
@@ -89,14 +143,7 @@ fn main() {
                 let mut message = String::new();
                 io::stdin().read_line(&mut message).unwrap();
                 let message = message.trim().to_string();
-            
-                // sample set of intermediary nodes for route
-                let mut rng = rand::thread_rng();
-                let random_ids: Vec<usize> = (0..server_pubkeys.len()).collect();
-                let selected_ids: Vec<usize> = random_ids.choose_multiple(&mut rng, 3).cloned().collect();
-                println!("Routing path node IDs: {:?}", selected_ids);
-                
-                // NEED TO FIX HARDCODE SOME NODES THAT THE CLIENT CHOOSES
+
 
                 // encrypt the initial message with a symmetric key for the recipient
                 let recipient_pubkey = match existing_users.lock().unwrap().get(&recipient) {
@@ -106,76 +153,41 @@ fn main() {
                         continue;
                     }
                 };
-            
-                // Generate symmetric key for recipient encryption
-                let sym_key1 = Aes256Gcm::generate_key(&mut rng);
-                let aes_gcm1 = Aes256Gcm::new(Key::from_slice(&sym_key1));
-                let nonce1 = Nonce::from_slice(&[0; 12]); // Constant nonce for simplicity
-            
-                // encrypt the message with the symmetric key
-                let encrypted_message = aes_gcm1.encrypt(nonce1, message.as_bytes()).expect("encryption failure!");
 
-                let enc_sym_key1 = recipient_pubkey
-                    .encrypt(&mut rng, Pkcs1v15Encrypt, &sym_key1)
-                    .expect("failed to encrypt symmetric key");
-            
-                // combine encrypted symmetric key and message for the first payload
-                // corrected initialization for `layer` using general purpose standard encode
-                let mut layer = format!(
-                    "{}|{}",
-                    general_purpose::STANDARD.encode(&enc_sym_key1),
-                    general_purpose::STANDARD.encode(&encrypted_message)
-                );
-            
-                // perform onion encryption for each node
-                for (i, id) in selected_ids.iter().rev().enumerate() {
-                    let server_pubkey = &server_pubkeys[*id];
-            
-                    // generate new symmetric key for this layer
-                    let sym_key = Aes256Gcm::generate_key(&mut rng);
-                    let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key));
-                    let nonce = Nonce::from_slice(&[0; 12]);
-            
-                    // Next node ID if not the last layer
-                    let next_node_id = if i < selected_ids.len() - 1 {
-                        selected_ids[selected_ids.len() - i - 2]
-                    } else {
-                        0 // no next node for last layer
-                    };
-            
-                    // eombine next node ID with the current layer
-                    let payload = format!("{}|{}", next_node_id, layer);
-            
-                    // encrypt payload with symmetric key
-                    let enc_payload = aes_gcm.encrypt(nonce, payload.as_bytes()).expect("encryption failure");
-            
-                    // encrypt symmetric key with the current node's public key
-                    let enc_sym_key = server_pubkey
-                        .encrypt(&mut rng, Pkcs1v15Encrypt, &sym_key)
-                        .expect("failed to encrypt symmetric key");
-            
-                    // Update layer with new encrypted symmetric key and payload
-                    layer = format!(
-                        "{}|{}",
-                        general_purpose::STANDARD.encode(&enc_sym_key),
-                        general_purpose::STANDARD.encode(&enc_payload)
-                    );
+
+                // lock the server_nodes to safely access it
+                let server_nodes_locked = server_nodes.lock().unwrap();
+                // select up to three nodes from server_nodes, with their IDs and public keys
+                let selected_server_nodes: Vec<(&str, &RsaPublicKey)> = server_nodes_locked
+                    .iter()
+                    .take(3)  // Get the first three nodes if available
+                    .map(|(id, pubkey)| (id.as_str(), pubkey))
+                    .collect();
+
+
+                // ensure we have exactly three nodes for encryption
+                if selected_server_nodes.len() < 3 {
+                    println!("Insufficient nodes available for onion encryption.");
+                    continue;
                 }
+                // perform onion encryption using helper function defined below
+                let encrypted_onion = onion_encrypt(&message, &recipient_pubkey, &recipient, &selected_server_nodes)?;
+                
             
-                // final message with the first node ID
-                let first_node_id = selected_ids[0]; // Send only the first node ID
-                let final_message = format!("{}|{}\n", layer, first_node_id);
-            
-                stream.write_all(final_message.as_bytes()).unwrap();
+                // send onion-encrypted message over the stream
+                if let Err(e) = stream.write_all(encrypted_onion.as_bytes()) {
+                    eprintln!("Failed to send message: {}", e);
+                } else {
+                    println!("Message sent successfully.");
+                }
             }
-            
-        
-            
-        }
+        },
         Err(e) => {
             println!("Failed to connect: {}", e);
         }
     }
+
+    Ok(())
 }
 
 // eileen: helper function to parse new user broadcast messages
@@ -188,4 +200,65 @@ fn parse_new_user_broadcast(message: &str) -> Option<(String, String)> {
     } else {
         None
     }
+}
+
+// eileen: basic onion encryption function
+// next steps include adding more information in the public key enryption part. 
+// right now we only include the symmetric key, next we need to include the index, current recipient, nonce, and verification hashes
+fn onion_encrypt(
+    message: &str,
+    recipient_pubkey: &RsaPublicKey,
+    recipient_id: &str,
+    server_nodes: &[(&str, &RsaPublicKey)]
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut rng = OsRng;
+
+    // **Step 1**: Start with the innermost encryption layer for the recipient
+    // Generate symmetric key for the recipient's layer (sym_K4)
+    let sym_key4 = Aes256Gcm::generate_key(&mut rng);
+    let aes_gcm4 = Aes256Gcm::new(Key::from_slice(&sym_key4));
+    let nonce4 = Nonce::from_slice(&[0; 12]); // Constant nonce for simplicity
+
+    // Encrypt the message with sym_K4
+    let encrypted_message = aes_gcm4.encrypt(nonce4, message.as_bytes())?;
+
+    // Encrypt sym_K4 with the recipient's public key
+    let enc_sym_key4 = recipient_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, &sym_key4)?;
+
+    // Combine the innermost layer: Recipient_ID, Enc_R_PK(sym_K4), Enc_symK4(message)
+    let mut layer = format!(
+        "{}|{}|{}",
+        recipient_id,
+        STANDARD.encode(&enc_sym_key4),
+        STANDARD.encode(&encrypted_message)
+    );
+
+    // **Step 2**: Wrap each subsequent layer in reverse order (starting from Node 3)
+    for (i, (node_id, node_pubkey)) in server_nodes.iter().rev().enumerate() {
+        // Generate symmetric key for the current layer
+        let sym_key = Aes256Gcm::generate_key(&mut rng);
+        let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key));
+        let nonce = Nonce::from_slice(&[0; 12]); // Constant nonce for simplicity
+
+        // Encrypt the current layer with the symmetric key
+        let encrypted_layer = aes_gcm.encrypt(nonce, layer.as_bytes())?;
+
+        // Encrypt the symmetric key with the node's public key
+        let enc_sym_key = node_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, &sym_key)?;
+
+        // Combine the current layer format:
+        // Node ID, Enc_PK_N(sym_K), Enc_symK(layer)
+        layer = format!(
+            "{}|{}|{}",
+            node_id,
+            STANDARD.encode(&enc_sym_key),
+            STANDARD.encode(&encrypted_layer)
+        );
+    }
+
+    // **Step 3**: Wrap the final onion with Node 1 ID and the encrypted layer
+    let final_onion = layer;
+
+    // After completing all layers, `layer` now represents the fully encrypted onion
+    Ok(final_onion)
 }
