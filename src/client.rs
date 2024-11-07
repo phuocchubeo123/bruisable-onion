@@ -49,6 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ));
             println!("Loaded existing user public keys from UserKeys.txt");
 
+            // ---------- RECEIVING MESSAGES ------------ //
+
             // spawn a thread to listen for incoming messages
             // clone Arc to move into thread
             let mut read_stream = stream.try_clone().unwrap();
@@ -143,6 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             
             // eileen edits to main thread loop for sending messages
+            // ---------- SENDING ENCRYPTED MESSAGES ------------ //
             loop {
                 println!("Enter recipient:");
                 let mut recipient = String::new();
@@ -164,10 +167,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-
                 // lock the server_nodes to safely access it
                 let server_nodes_locked = server_nodes.lock().unwrap();
                 // select up to three nodes from server_nodes, with their IDs and public keys
+                println!("Choosing 3 random intermediary nodes.");
                 let selected_server_nodes: Vec<(&str, &RsaPublicKey)> = server_nodes_locked
                     .iter()
                     .take(3)  // Get the first three nodes if available
@@ -223,17 +226,17 @@ fn onion_encrypt(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut rng = OsRng;
 
-    // **Step 1**: Start with the innermost encryption layer for the recipient
-    // Generate symmetric key for the recipient's layer (sym_K4)
+    // STEP 1: Start with the innermost encryption layer for the recipient
+    // generate symmetric key for the recipient's layer (sym_K4)
     let sym_key4 = Aes256Gcm::generate_key(&mut rng);
     let aes_gcm4 = Aes256Gcm::new(Key::from_slice(&sym_key4));
     let nonce4 = Nonce::from_slice(&[0; 12]); // Constant nonce for simplicity
 
-    // Encrypt the message with sym_K4
+    // encrypt message with sym_K4
     let encrypted_message = aes_gcm4.encrypt(nonce4, message.as_bytes())?;
 
     // Encrypt sym_K4 with the recipient's public key
-    let enc_sym_key4 = recipient_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, &sym_key4)?;
+    let enc_sym_key4 = recipient_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, &sym_key4)?; //this is where in future edits we need to add R, A, i, y
 
     // Combine the innermost layer: Recipient_ID, Enc_R_PK(sym_K4), Enc_symK4(message)
     let mut layer = format!(
@@ -246,21 +249,21 @@ fn onion_encrypt(
     //println!("Initial encrypted layer for recipient: {}", layer);
     println!("Done with encrypted layer for recipient");
 
-    // **Step 2**: Wrap each subsequent layer in reverse order (starting from Node 3)
+    // STEP 2: wrap each subsequent layer in reverse order (starting from Node 3)
     for (node_id, node_pubkey) in server_nodes.iter().rev() {
         // Generate symmetric key for the current layer
         let sym_key = Aes256Gcm::generate_key(&mut rng);
         let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key));
         let nonce = Nonce::from_slice(&[0; 12]); // Constant nonce for simplicity
 
-        // Encrypt the current layer with the symmetric key
+        // encrypt the current layer with the symmetric key
         let encrypted_layer = aes_gcm.encrypt(&nonce, layer.as_bytes())?;
 
-        // Encrypt the symmetric key with the node's public key
+        // encrypt the symmetric key with the node's public key
         let enc_sym_key = node_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, &sym_key)?;
 
-        // Combine the current layer format:
-        // Node ID, Enc_PK_N(sym_K), Enc_symK(layer)
+        // combine the current layer format:
+        // node ID, Enc_PK_N(sym_K), Enc_symK(layer)
         layer = format!(
             "{}|{}|{}",
             node_id,
@@ -275,6 +278,6 @@ fn onion_encrypt(
     // FINAL layer - Add a newline here to mark the end of the onion message
     let final_onion = format!("{}\n", layer);  // Adding the newline at the very end
 
-    // After completing all layers, `layer` now represents the fully encrypted onion
+    // after completing all layers, `layer` now represents the fully encrypted onion
     Ok(final_onion)
 }

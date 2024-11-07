@@ -13,13 +13,14 @@ use aes_gcm::aead::{Aead, NewAead};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::io::{BufRead, BufReader};
 
+// eileen function to decrypt the onion received from client
 fn onion_decrypt(
     onion: &str,
     node_secrets: &HashMap<String, RsaPrivateKey>, // Maps node IDs to their private keys
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut current_layer = onion.to_string();
     
-    // **Step 1**: Loop to decrypt each of the 3 layers, from outermost to innermost
+    // loop to decrypt each of the 3 layers, from outermost to innermost
     for _ in 0..3 { // We know there are 3 nodes, so we decrypt 3 layers
         // Split the current layer into three parts: node_id, encrypted symmetric key, and encrypted layer
         let parts: Vec<&str> = current_layer.split('|').collect();
@@ -31,14 +32,14 @@ fn onion_decrypt(
         let enc_sym_key = parts[1];      // Encrypted symmetric key for the current layer
         let encrypted_layer = parts[2];  // The encrypted layer content
 
-        // **Step 2**: Get the private key for the current node
+        // get the private key for the current node
         let node_seckey = node_secrets.get(node_id).ok_or("Node ID not found")?;
 
         // Decrypt the symmetric key for the current layer using the current node's private key
         let enc_sym_key_bytes = STANDARD.decode(enc_sym_key)?;
         let sym_key_bytes = node_seckey.decrypt(Pkcs1v15Encrypt, &enc_sym_key_bytes)?;
 
-        // **Step 3**: Decrypt the layer content using the symmetric key for the current layer
+        // decrypt the layer content using the symmetric key for the current layer
         let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key_bytes));
         let nonce = Nonce::from_slice(&[0; 12]); // Use a constant nonce
 
@@ -50,7 +51,7 @@ fn onion_decrypt(
         //println!("Current layer after decryption: {}", current_layer); //debugging
     }
 
-    // **Step 4**: After decrypting all layers, we expect the final layer to contain:
+    // ater decrypting all layers, we expect the final layer to contain:
     // 1. The recipient ID
     // 2. The encrypted symmetric key for the recipient
     // 3. The encrypted message
@@ -64,23 +65,22 @@ fn onion_decrypt(
     let enc_sym_key = parts[1];    // Encrypted symmetric key for the recipient
     let encrypted_message = parts[2]; // The encrypted message
 
-    // step 5: format the final result into a single string compatible with client's parsing
+    // format the final result into a single string compatible with client's parsing
     let result = format!("{}|{}|{}", recipient_id, enc_sym_key, encrypted_message);
 
     Ok(result) // Return the formatted string to the client
 }
 
-
+// receive and forward messages from the client
 fn handle_client(
     mut stream: TcpStream,
     clients: Arc<Mutex<HashMap<String, TcpStream>>>,
     existing_users: Arc<Mutex<HashMap<String, RsaPublicKey>>>,
     seckeys: Arc<Mutex<HashMap<String, RsaPrivateKey>>>, // Server's private keys for decryption
 ) {
-    // eileen : buffer for accumulating data until a complete message is received
     let mut buffer = [0; 512];
 
-    // Step 1: Receive and store the username and PEM key
+    // receive and store the username and PEM key
     stream.read(&mut buffer).unwrap();
     let username_and_pem = String::from_utf8_lossy(&buffer[..])
         .trim_matches(char::from(0))
@@ -132,7 +132,7 @@ fn handle_client(
         }
     }
 
-    // Step 2: Add client to the clients HashMap and store the public key in existing_users
+    // add client to the clients HashMap and store the public key in existing_users
     {
         let mut clients = clients.lock().unwrap();
         let mut users = existing_users.lock().unwrap();
@@ -141,16 +141,15 @@ fn handle_client(
         println!("Current users: {:?}", clients.keys().collect::<Vec<_>>());
     }
 
-    // Step 3: Listen for messages from the client
-    // Step 3: Listen for messages from the client
+    // eileen: listen for messages from client and create reader and buffer. server reads until it receives a newline at end of message to mark complete onion
     let mut reader = BufReader::new(stream);
     let mut buffer = String::new();
 
     loop {
         // Step 1: Read the incoming message
-        buffer.clear(); // Clear previous buffer to store next message
+        buffer.clear(); // clear previous buffer to store next message
 
-        // Try to read until we get a full message, assuming it is terminated by a newline or other delimiter.
+        // try to read until we get a full message, assuming it is terminated by newline
         match reader.read_line(&mut buffer) {
             Ok(0) => {
                 // Connection closed, exit the loop
@@ -158,21 +157,21 @@ fn handle_client(
                 break;
             }
             Ok(_) => {
-                // Clean the received message and debug
+                // clean the received message and debug
                 let received_message = buffer.trim().to_string();
                 println!("Received message: {:?}", received_message);
 
-                // Step 2: Split the received message format: Recipient_ID|Enc_R_PK(sym_K4)|Enc_symK4(message)
+                // split the received message format: Recipient_ID|Enc_R_PK(sym_K4)|Enc_symK4(message)
                 let parts: Vec<&str> = received_message.split('|').collect();
                 println!("Parsed parts: {:?}", parts);
 
-                // Step 3: Ensure the message format has three parts (Recipient ID, Encrypted Public Key, Encrypted Message)
+                // ensure the message format has three parts (Recipient ID, Encrypted Public Key, Encrypted Message)
                 if parts.len() != 3 {
                     eprintln!("Invalid message format");
                     continue;
                 }
 
-                // Step 4: Decrypt the message
+                // decrypt the message
                 let decrypted_message = match onion_decrypt(&received_message, &seckeys.lock().unwrap()) {
                     Ok(decrypted) => decrypted,
                     Err(e) => {
@@ -181,7 +180,7 @@ fn handle_client(
                     }
                 };
 
-                // Step 5: Further process the decrypted message
+                // further process the decrypted message
                 let final_decrypted_layer: Vec<&str> = decrypted_message.split('|').collect();
                 if final_decrypted_layer.len() != 3 {
                     eprintln!("Decrypted message format invalid");
@@ -193,7 +192,7 @@ fn handle_client(
                 let enc_sym_key4 = final_decrypted_layer[1];
                 let encrypted_message = final_decrypted_layer[2];
 
-                // Step 6: Find the recipient's stream and send the entire decrypted message
+                // find the recipient's stream and send the entire decrypted message
                 let clients = clients.lock().unwrap();
                 if let Some(mut recipient_stream) = clients.get(final_recipient_id) {
                     let message_to_send = format!("{}|{}|{}", final_recipient_id, enc_sym_key4, encrypted_message);
@@ -242,7 +241,7 @@ fn main() {
         Err(e) => eprintln!("Failed to write to PKKeys.txt: {}", e),
     };
 
-    // Step 2: Load server public keys and private keys into the HashMaps
+    // Load server public keys and private keys into the HashMaps
     {
         let mut users = existing_users.lock().unwrap();
         let mut sec_keys = seckeys.lock().unwrap();
