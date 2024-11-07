@@ -84,20 +84,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // using index 4 here because we are using three intermediary nodes, so the recipient will have index 4
                         // later we will add these indexes into the metadata of the onion, specifically in the part encrypted with the public key
                         // for now this only includes the current symmetric key for the node
-                        let parts: Vec<&str> = received_message.split('|').collect();
+                        println!("Raw received message: {}", received_message);
 
+                        let parts: Vec<&str> = received_message.split('|').collect();
+                        //println!("Parts: {:?}", parts); debug
                         if parts.len() == 3 {
                             let recipient_id = parts[0];
                             let enc_sym_key4 = parts[1];
                             let encrypted_message = parts[2];
+
+                            //println!("Received: recipient_id = {}, enc_sym_key4 = {}, encrypted_message = {}", recipient_id, enc_sym_key4, encrypted_message); //debug
 
                             // check if this message is for this client (by comparing recipient_id to username)
                             if recipient_id == username.trim() {
                                 // step 3: decode and decrypt symmetric key with the private key
                                 match STANDARD.decode(enc_sym_key4) {
                                     Ok(enc_sym_key_bytes) => {
+                                        //println!("Decoded symmetric key bytes: {:?}", enc_sym_key_bytes);
+                                        println!("Decoded symmetric key bytes");
                                         match personal_seckey.decrypt(Pkcs1v15Encrypt, &enc_sym_key_bytes) {
                                             Ok(sym_key4) => {
+                                                //println!("Decrypted symmetric key: {:?}", sym_key4);
+                                                println!("Decrypted symmetric key");
                                                 // step 4: use the symmetric key to decrypt the message
                                                 let aes_gcm4 = Aes256Gcm::new(Key::from_slice(&sym_key4));
                                                 let nonce4 = Nonce::from_slice(&[0; 12]); // Same nonce as used in encryption
@@ -105,6 +113,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 // decode encrypted message and do error checking
                                                 match STANDARD.decode(encrypted_message) {
                                                     Ok(encrypted_message_bytes) => {
+                                                        //println!("Decoded encrypted message: {:?}", encrypted_message_bytes);
+                                                        println!("Decoded encrypted message");
                                                         match aes_gcm4.decrypt(nonce4, encrypted_message_bytes.as_ref()) {
                                                             Ok(decrypted_message) => {
                                                                 // convert decrypted message to string and print
@@ -123,10 +133,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Err(e) => eprintln!("Failed to decode encrypted symmetric key: {}", e),
                                 }
                             } else {
-                                println!("Received: {}", received_message);
+                                println!("Received1: {}", received_message);
                             }
                         } else {
-                            println!("Received: {}", received_message); 
+                            println!("Received2: {}", received_message); 
                         }
                     }
                 }
@@ -233,15 +243,18 @@ fn onion_encrypt(
         STANDARD.encode(&encrypted_message)
     );
 
+    //println!("Initial encrypted layer for recipient: {}", layer);
+    println!("Done with encrypted layer for recipient");
+
     // **Step 2**: Wrap each subsequent layer in reverse order (starting from Node 3)
-    for (i, (node_id, node_pubkey)) in server_nodes.iter().rev().enumerate() {
+    for (node_id, node_pubkey) in server_nodes.iter().rev() {
         // Generate symmetric key for the current layer
         let sym_key = Aes256Gcm::generate_key(&mut rng);
         let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key));
         let nonce = Nonce::from_slice(&[0; 12]); // Constant nonce for simplicity
 
         // Encrypt the current layer with the symmetric key
-        let encrypted_layer = aes_gcm.encrypt(nonce, layer.as_bytes())?;
+        let encrypted_layer = aes_gcm.encrypt(&nonce, layer.as_bytes())?;
 
         // Encrypt the symmetric key with the node's public key
         let enc_sym_key = node_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, &sym_key)?;
@@ -254,10 +267,13 @@ fn onion_encrypt(
             STANDARD.encode(&enc_sym_key),
             STANDARD.encode(&encrypted_layer)
         );
+        //println!("Layer after wrapping with node {}: {}", node_id, layer);
+        println!("Done wrapping with node : {}", node_id);
     }
 
-    // **Step 3**: Wrap the final onion with Node 1 ID and the encrypted layer
-    let final_onion = layer;
+
+    // FINAL layer - Add a newline here to mark the end of the onion message
+    let final_onion = format!("{}\n", layer);  // Adding the newline at the very end
 
     // After completing all layers, `layer` now represents the fully encrypted onion
     Ok(final_onion)

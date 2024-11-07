@@ -11,6 +11,7 @@ use std::thread;
 use aes_gcm::{Aes256Gcm, Key, Nonce}; 
 use aes_gcm::aead::{Aead, NewAead};
 use base64::{engine::general_purpose::STANDARD, Engine};
+use std::io::{BufRead, BufReader};
 
 fn onion_decrypt(
     onion: &str,
@@ -31,10 +32,7 @@ fn onion_decrypt(
         let encrypted_layer = parts[2];  // The encrypted layer content
 
         // **Step 2**: Get the private key for the current node
-        let node_seckey = match node_secrets.get(node_id) {
-            Some(key) => key,
-            None => return Err("Node ID not found in secrets".into()),
-        };
+        let node_seckey = node_secrets.get(node_id).ok_or("Node ID not found")?;
 
         // Decrypt the symmetric key for the current layer using the current node's private key
         let enc_sym_key_bytes = STANDARD.decode(enc_sym_key)?;
@@ -48,6 +46,8 @@ fn onion_decrypt(
 
         // Convert the decrypted layer back to a string for the next iteration
         current_layer = String::from_utf8_lossy(&decrypted_layer).into_owned();
+
+        //println!("Current layer after decryption: {}", current_layer); //debugging
     }
 
     // **Step 4**: After decrypting all layers, we expect the final layer to contain:
@@ -77,21 +77,44 @@ fn handle_client(
     existing_users: Arc<Mutex<HashMap<String, RsaPublicKey>>>,
     seckeys: Arc<Mutex<HashMap<String, RsaPrivateKey>>>, // Server's private keys for decryption
 ) {
+    // eileen : buffer for accumulating data until a complete message is received
     let mut buffer = [0; 512];
 
-    // Step 1: Receive and store the username for this client
+    // Step 1: Receive and store the username and PEM key
     stream.read(&mut buffer).unwrap();
     let username_and_pem = String::from_utf8_lossy(&buffer[..])
         .trim_matches(char::from(0))
         .trim()
         .to_string();
     
-    let mut lines = username_and_pem.lines();
-    let username = lines.next().unwrap().to_string();
-    let pem = lines.collect::<Vec<&str>>().join("\n");
-    let pubkey = RsaPublicKey::from_pkcs1_pem(&pem).expect("Failed to parse public key from PEM");
+    // Debugging: Show the raw received data
+    println!("Raw received data: {:?}", username_and_pem);
 
-    println!("User '{}' connected.", username);
+    // Parse the username and PEM key from the received data
+    let mut lines = username_and_pem.lines();
+    let username = lines.next().unwrap_or_default().to_string();
+    let pem = lines.collect::<Vec<&str>>().join("\n");
+
+    // Debugging: Check parsed parts
+    println!("Parsed Username: {:?}", username);
+    println!("Parsed PEM Key Contents:\n{}", pem);
+
+    // Validate PEM format
+    if !pem.starts_with("-----BEGIN RSA PUBLIC KEY-----") || !pem.ends_with("-----END RSA PUBLIC KEY-----") {
+        eprintln!("Received invalid PEM format for user '{}': {:?}", username, pem);
+        return;
+    }
+
+    // Attempt to parse the PEM key
+    let pubkey = match RsaPublicKey::from_pkcs1_pem(&pem) {
+        Ok(key) => key,
+        Err(e) => {
+            eprintln!("Failed to parse public key from PEM for user '{}': {:?}", username, e);
+            return;
+        }
+    };
+
+    println!("User '{}' connected with valid PEM key.", username);
 
     // Add user to the list
     match update_user_list("UserKeys.txt", &username, &pubkey) {
@@ -99,14 +122,12 @@ fn handle_client(
         Err(e) => eprintln!("Error adding user to list of existing users: {}", e),
     };
 
-    // Broadcast the new user's username and public key to all clients
+    // broadcast the new user's username and public key to all clients
     {
-        // Lock Clients list, send the new pubkey to every clients
         let clients = clients.lock().unwrap();
         let broadcast_message = format!("{}\n{}", username, pem);
         for (recipient, mut recipient_stream) in clients.iter() {
             println!("Broadcasting new key to {}", recipient);
-            recipient_stream.write_all(username_and_pem.as_bytes()).unwrap();
             recipient_stream.write_all(broadcast_message.as_bytes()).unwrap();
         }
     }
@@ -121,58 +142,77 @@ fn handle_client(
     }
 
     // Step 3: Listen for messages from the client
+    // Step 3: Listen for messages from the client
+    let mut reader = BufReader::new(stream);
+    let mut buffer = String::new();
+
     loop {
-        let size = match stream.read(&mut buffer) {
-            Ok(size) if size > 0 => size,
-            _ => break,
-        };
+        // Step 1: Read the incoming message
+        buffer.clear(); // Clear previous buffer to store next message
 
-        let received_message = String::from_utf8_lossy(&buffer[..size]);
+        // Try to read until we get a full message, assuming it is terminated by a newline or other delimiter.
+        match reader.read_line(&mut buffer) {
+            Ok(0) => {
+                // Connection closed, exit the loop
+                println!("Client disconnected");
+                break;
+            }
+            Ok(_) => {
+                // Clean the received message and debug
+                let received_message = buffer.trim().to_string();
+                println!("Received message: {:?}", received_message);
 
-        // Step 1: Split the received message format: Recipient_ID|Enc_R_PK(sym_K4)|Enc_symK4(message)
-        let parts: Vec<&str> = received_message.split('|').collect();
+                // Step 2: Split the received message format: Recipient_ID|Enc_R_PK(sym_K4)|Enc_symK4(message)
+                let parts: Vec<&str> = received_message.split('|').collect();
+                println!("Parsed parts: {:?}", parts);
 
-        // check that the message format is correct and has three parts
-        if parts.len() != 3 {
-            eprintln!("Invalid message format");
-            continue;
-        }
-        if parts.len() == 3 {
-
-            // Decrypt the message
-            let decrypted_message = match onion_decrypt(&received_message, &seckeys.lock().unwrap()) {
-                Ok(decrypted) => decrypted,
-                Err(e) => {
-                    eprintln!("Decryption failed: {}", e);
+                // Step 3: Ensure the message format has three parts (Recipient ID, Encrypted Public Key, Encrypted Message)
+                if parts.len() != 3 {
+                    eprintln!("Invalid message format");
                     continue;
                 }
-            };
-            // final decrypted layer that is encrypted with the final recipients PKs
-            let final_decrypted_layer: Vec<&str> = decrypted_message.split('|').collect();
-            // ensure that final layer is in correct format if not print to screen error message
-            if final_decrypted_layer.len() != 3 {
-                eprintln!("Decrypted message format invalid");
-                continue;
-            }
-            // get the final recipient id
-            let final_recipient_id = final_decrypted_layer[0];
 
-            // find the recipient's stream and print errors if necessary
-            let clients = clients.lock().unwrap();
-            if let Some(mut recipient_stream) = clients.get(final_recipient_id) {
-                if let Err(e) = recipient_stream.write_all(decrypted_message.as_bytes()) {
-                    eprintln!("Failed to send message to recipient '{}': {}", final_recipient_id, e);
+                // Step 4: Decrypt the message
+                let decrypted_message = match onion_decrypt(&received_message, &seckeys.lock().unwrap()) {
+                    Ok(decrypted) => decrypted,
+                    Err(e) => {
+                        eprintln!("Decryption failed: {}", e);
+                        continue;
+                    }
+                };
+
+                // Step 5: Further process the decrypted message
+                let final_decrypted_layer: Vec<&str> = decrypted_message.split('|').collect();
+                if final_decrypted_layer.len() != 3 {
+                    eprintln!("Decrypted message format invalid");
+                    continue;
                 }
-            } else {
-                eprintln!("Recipient '{}' not found!", final_recipient_id);
+
+                // Final recipient ID
+                let final_recipient_id = final_decrypted_layer[0];
+                let enc_sym_key4 = final_decrypted_layer[1];
+                let encrypted_message = final_decrypted_layer[2];
+
+                // Step 6: Find the recipient's stream and send the entire decrypted message
+                let clients = clients.lock().unwrap();
+                if let Some(mut recipient_stream) = clients.get(final_recipient_id) {
+                    let message_to_send = format!("{}|{}|{}", final_recipient_id, enc_sym_key4, encrypted_message);
+                    
+                    if let Err(e) = recipient_stream.write_all(message_to_send.as_bytes()) {
+                        eprintln!("Failed to send message to recipient '{}': {}", final_recipient_id, e);
+                    }
+                } else {
+                    eprintln!("Recipient '{}' not found!", final_recipient_id);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to read from stream: {}", e);
+                break;
             }
         }
     }
 
-
-
-
-    // remove client from the list on disconnect
+    // Remove client from the list on disconnect
     {
         let mut clients = clients.lock().unwrap();
         let mut users = existing_users.lock().unwrap();
@@ -181,6 +221,7 @@ fn handle_client(
         println!("User '{}' disconnected. Remaining users: {:?}", username, clients.keys().collect::<Vec<_>>());
     }
 }
+
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
