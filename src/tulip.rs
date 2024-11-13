@@ -36,10 +36,10 @@ pub fn tulip_encrypt(
 
     let master_key = Aes256Gcm::generate_key(&mut rng); // master key
 
-    // Step 2: Forming the first sepal S1 for the first mixer
-    let mut S1 = Vec::<_>::new();
-    let mut S1_nonce = Vec::<_>::new();
-    let mut S1_enc = Vec::<_>::new();
+    // Step 2: Forming the first sepal S for the first mixer
+    let mut S_nonce = Vec::<_>::new();
+    let mut S_enc = Vec::<_>::new();
+
     for master_key_block in 0..max_bruise.clone() {
         let mut enc_master_key = master_key.as_slice().to_vec(); // stupid workaround to copy the master key
         let nonce = Aes256Gcm::generate_nonce(&mut rng); // Currently, I use the same nonce for every layer, I hope that it is safe
@@ -48,14 +48,8 @@ pub fn tulip_encrypt(
             enc_master_key = aes_gcm.encrypt(&nonce, enc_master_key.as_slice()).expect("Encryption Failed!");
         }
 
-        let nonce_bytes = nonce.to_vec();
-        let mut nonce_enc_master_key = Vec::with_capacity(nonce.to_vec().len() + enc_master_key.len()); // try to concatenate nonce with enc_master_key
-        nonce_enc_master_key.extend_from_slice(&nonce_bytes);
-        nonce_enc_master_key.extend_from_slice(&enc_master_key);
-
-        S1.push(nonce_enc_master_key);
-        S1_nonce.push(nonce);
-        S1_enc.push(enc_master_key);
+        S_nonce.push(nonce);
+        S_enc.push(enc_master_key);
     }
 
     for null_block in 0..(l1 - max_bruise + 1) {
@@ -66,29 +60,24 @@ pub fn tulip_encrypt(
             enc_null = aes_gcm.encrypt(&nonce, enc_null.as_slice()).expect("Encrypt Null failed!");
         }
 
-        let nonce_bytes = nonce.to_vec();
-        let mut nonce_enc_null = Vec::with_capacity(nonce.to_vec().len() + enc_null.len()); // try to concatenate nonce with enc_master_key
-        nonce_enc_null.extend_from_slice(&nonce_bytes);
-        nonce_enc_null.extend_from_slice(&enc_null);
-        S1.push(nonce_enc_null);
-        S1_nonce.push(nonce);
-        S1_enc.push(enc_null);
+        S_nonce.push(nonce);
+        S_enc.push(enc_null);
     }
 
     // Creating the clasp
 
     // Creating Tij
     let mut T = Vec::<Vec<_>>::new(); // Tij is the sepal block S1j without the i-1 outermost encryption layers
-    T.push(S1_enc.clone());
+    T.push(S_enc.clone());
     for (layer_id, layer_key) in (1..l).zip(k.iter().take(l-1)) { // each time peel one layer, left to right
         let aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&layer_key));
         let Ti: Vec<_> = (0..(l1+1))
-            .map(|i| aes_gcm.decrypt(&S1_nonce[i], T[layer_id-1][i].as_slice()).expect("Cannot decrypt the sepal layer"))
+            .map(|i| aes_gcm.decrypt(&S_nonce[i], T[layer_id-1][i].as_slice()).expect("Cannot decrypt the sepal layer"))
             .collect();
         T.push(Ti);
     }
 
-    // RECHECK!
+    // The hash that contains the dummy sepal block would not matter!
     for i in 0..l1 {  // Put a dummy sepal block T_{i, l1+2} in
         let mut enc_rand = vec![0u8; master_key.as_slice().to_vec().len()]; // placeholder for random string with the same length as the master key
         OsRng.fill_bytes(&mut enc_rand); // fill enc_rand with random bytes
@@ -362,16 +351,17 @@ pub fn tulip_encrypt(
         H = format!(
             "{},{}",
             STANDARD.encode(&E),
-            B.iter().map(|x| STANDARD.encode(&x)).rev().collect::<Vec<_>>().join(",")
+            B.iter().map(|x| STANDARD.encode(x)).rev().collect::<Vec<_>>().join(",")
         );
     }
 
 
-    let final_onion = format!(
-        "{}|{}|{}",
+    let final_onion = format!(     // I will change the message format a bit. It will be: Header | Content | Sepal_nonce | Sepal_enc
+        "{}|{}|{}|{}",
         H,
         STANDARD.encode(&c),
-        S1.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(",")
+        S_nonce.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),
+        S_enc.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),
     );
 
     Ok(final_onion)
@@ -384,49 +374,68 @@ pub fn tulip_decrypt(
 ) -> Result<String, Box<dyn std::error::Error>> {
     // This function is only for one node to process the onion that is sent to this node
 
-    let mut binding = tulip.to_string(); // just a placeholder to translate any &str into string
+    let tulip_string = tulip.to_string(); // just a placeholder to translate any &str into string
 
-    let parts: Vec<&str> = binding.split('|').collect();
+    let parts: Vec<&str> = tulip_string.split('|').collect();
 
-    if parts.len() != 3 {
+    if parts.len() != 4 {
         return Err("Invalid onion layer format".into());
     }
 
     let H = parts[0]; // Header
     let c = parts[1]; // content
-    let S1_string = parts[2]; // unprocessed sepal
+    let S_nonce_string = parts[2]; // sepal_nonce
+    let S_enc_string = parts[3]; // sepal_enc
 
     // Step 1: Process header
 
-    binding = H.to_string();
-    let H_parts: Vec<&str> = binding.split(',').collect();
+    let H_string = H.to_string();
+    let H_parts: Vec<&str> = H_string.split(',').collect();
 
-    // Read B first, this is always possible since this is not the recipient
+    // Process E
+    let E = STANDARD.decode(H_parts[0])?; // E_i
+    let e = node_seckey.decrypt(Pkcs1v15Encrypt, &E)?;
+    let e_string = str::from_utf8(e.as_slice()).unwrap().to_string();
+    let e_parts: Vec<&str> = e_string.split('|').collect();
+
+    let t = STANDARD.decode(e_parts[0])?; // t_i
+
+    let role = e_parts[1].to_string(); // role
+    if role == "Recipient" {
+        eprintln!("Something's wrong! Cannot let the server know the message for recipient!");
+    }
+
+    let hop_index_string = e_parts[2].to_string();
+    let hop_index = hop_index_string.parse::<usize>().unwrap(); // parse hop_index as usize
+
+    // Get the layer key
+    let layer_key = STANDARD.decode(e_parts[3])?;
+    let aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&layer_key));
+
+    // Other metadata
+    let layer_nonce = STANDARD.decode(e_parts[4])?; 
+    let vAi_string = e_parts[5].to_string();
+
+
+    // Now I want to check vAi_string hashes, does this list include the hash of the sepal?
+    // First process the sepal
+    let S_nonce = S_nonce_string.split(',').map(|x| STANDARD.decode(x).expect("Failed to decode sepal nonce!")).collect::<Vec<_>>();
+    let S_enc = S_enc_string.split(',').map(|x| STANDARD.decode(x).expect("Failed to decode sepal encrypted.")).collect::<Vec<_>>();
+
+    // decrypt, also make sepal for next layer
+    for (s_nonce, s_enc) in S_nonce.iter().zip(S_enc.iter()) {
+        let nonce = Nonce::from_slice(s_nonce);
+        let sepal_block = aes_gcm.decrypt(nonce, s_enc.as_slice())?;
+    }
+
+
+    // Process B
 
     let mut B = Vec::<_>::new();
     for i in 1..H_parts.len() {
         B.push(STANDARD.decode(H_parts[i]).expect("Decoding Bij failed!"));
     }
 
-
-    // Process E
-    let E = STANDARD.decode(H_parts[0])?; // E_i
-    let e = node_seckey.decrypt(Pkcs1v15Encrypt, &E)?;
-    binding = str::from_utf8(e.as_slice()).unwrap().to_string();
-    let e_parts: Vec<&str> = binding.split('|').collect();
-
-    let t = STANDARD.decode(e_parts[0])?; // t_i
-    let role = e_parts[1].to_string(); // role
-    let hop_index_string = e_parts[2].to_string();
-    let hop_index = hop_index_string.parse::<usize>().unwrap(); // parse hop_index as usize
-    let layer_nonce = STANDARD.decode(e_parts[3])?; 
-    let vAi_string = e_parts[4].to_string();
-
-    if role == "Recipient" {
-        eprintln!("Something's wrong! Cannot let the server know the message for recipient!");
-    }
-
-    // Now I want to check vAi_string hashes, does this list include the hash of the sepal?
 
 
     let next_message = "NOT COMPLETE".to_string();
