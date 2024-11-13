@@ -137,7 +137,7 @@ pub fn tulip_encrypt(
     hasher_last.update(c.clone());
     let t_last = hasher_last.finalize(); // tag for the last layer
     let e_last = format!(
-        "Recipient|{}|{}|{}",
+        "Recipient|{}|{}|{}", // role, tag, hop index, layer key
         STANDARD.encode(&t_last),
         l-1,
         STANDARD.encode(&k[l-1]),
@@ -145,7 +145,7 @@ pub fn tulip_encrypt(
     let mut E = recipient_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, &e_last.as_bytes())?;
     let mut H = format!(  // H_l = E_l
         "{}",
-        STANDARD.encode(&E)
+        STANDARD.encode(&E) //lower case e decrypted/plaintext, E encrypted/ciphertext
     ); 
 
 
@@ -156,7 +156,7 @@ pub fn tulip_encrypt(
 
     // Create content
     let aes_gcm_gatekeeper_last = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&master_key));
-    let nonce_gatekeeper_last = Nonce::from_slice(y[l-2]); // Constant nonce for simplicity
+    let nonce_gatekeeper_last = Nonce::from_slice(y[l-2]); // last gatekeeper nonce for simplicity
     let c = aes_gcm_gatekeeper_last.encrypt(nonce_gatekeeper_last, c.as_slice())?; // content for the last gatekeeper is the encryption of c_last under master_key
 
     // Global B array for later use also
@@ -179,7 +179,7 @@ pub fn tulip_encrypt(
     // Create header
 
     let e_gatekeeper_last = format!(
-        "LastGatekeeper|{}|{}|{}|{}|{}",
+        "LastGatekeeper|{}|{}|{}|{}|{}", //role, tag, hop index, layer key, nonce, vector sorted hashes
         STANDARD.encode(&t_gatekeeper_last),
         l-2,
         STANDARD.encode(&k[l-2]),
@@ -217,7 +217,7 @@ pub fn tulip_encrypt(
             B[i] = aes_gcm_gatekeeper.encrypt(nonce_gatekeeper, B[i].as_slice()).expect("Cannot encrypt new B");
         }
 
-        // Create b_{i, 1}
+        // Create b_{i, 1} //wrap B's in opposite order
         let b_gatekeeper = format!( // b_{i, 1} = (I_{i+1}, E_{i+1}})
             "{}|{}",
             next_gatekeeper_id,
@@ -357,7 +357,7 @@ pub fn tulip_encrypt(
 
 
     let final_onion = format!(     // I will change the message format a bit. It will be: Header | Content | Sepal_nonce | Sepal_enc
-        "{}|{}|{}|{}",
+        "{}|{}|{}|{}\n",
         H,
         STANDARD.encode(&c),
         S_nonce.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),
