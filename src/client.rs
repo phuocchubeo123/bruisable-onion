@@ -1,5 +1,7 @@
 extern crate rsa;
+extern crate sha2;
 mod crypto;
+mod tulip;
 
 use std::net::TcpStream;
 use std::io::{self, Write, Read};
@@ -10,11 +12,13 @@ use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey, LineEnding};
 use rsa::{RsaPublicKey, Pkcs1v15Encrypt}; 
 use std::collections::HashMap;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use rand::rngs::OsRng;
+use rand::{rngs::OsRng, RngCore};
 use aes_gcm::{
-    aead::{Aead, NewAead},
+    aead::{Aead, AeadCore, KeyInit},
     Aes256Gcm, Key, Nonce
 }; 
+use sha2::{Sha256, Digest};
+use tulip::tulip_encrypt;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match TcpStream::connect("127.0.0.1:7878") {
@@ -89,56 +93,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("Raw received message: {}", received_message);
 
                         let parts: Vec<&str> = received_message.split('|').collect();
-                        //println!("Parts: {:?}", parts); debug
-                        if parts.len() == 3 {
-                            let recipient_id = parts[0];
-                            let enc_sym_key4 = parts[1];
-                            let encrypted_message = parts[2];
+                        
+                        if parts.len() != 3 { // Most likely does not happen
+                            eprintln!("Message received does not have 3 parts!");
+                        }
 
-                            //println!("Received: recipient_id = {}, enc_sym_key4 = {}, encrypted_message = {}", recipient_id, enc_sym_key4, encrypted_message); //debug
+                        let recipient_id = parts[0];
+                        let enc_sym_key4 = parts[1];
+                        let encrypted_message = parts[2];
 
-                            // check if this message is for this client (by comparing recipient_id to username)
-                            if recipient_id == username.trim() {
-                                // step 3: decode and decrypt symmetric key with the private key
-                                match STANDARD.decode(enc_sym_key4) {
-                                    Ok(enc_sym_key_bytes) => {
-                                        //println!("Decoded symmetric key bytes: {:?}", enc_sym_key_bytes);
-                                        println!("Decoded symmetric key bytes");
-                                        match personal_seckey.decrypt(Pkcs1v15Encrypt, &enc_sym_key_bytes) {
-                                            Ok(sym_key4) => {
-                                                //println!("Decrypted symmetric key: {:?}", sym_key4);
-                                                println!("Decrypted symmetric key");
-                                                // step 4: use the symmetric key to decrypt the message
-                                                let aes_gcm4 = Aes256Gcm::new(Key::from_slice(&sym_key4));
-                                                let nonce4 = Nonce::from_slice(&[0; 12]); // Same nonce as used in encryption
+                        //println!("Received: recipient_id = {}, enc_sym_key4 = {}, encrypted_message = {}", recipient_id, enc_sym_key4, encrypted_message); //debug
 
-                                                // decode encrypted message and do error checking
-                                                match STANDARD.decode(encrypted_message) {
-                                                    Ok(encrypted_message_bytes) => {
-                                                        //println!("Decoded encrypted message: {:?}", encrypted_message_bytes);
-                                                        println!("Decoded encrypted message");
-                                                        match aes_gcm4.decrypt(nonce4, encrypted_message_bytes.as_ref()) {
-                                                            Ok(decrypted_message) => {
-                                                                // convert decrypted message to string and print
-                                                                let message_text = String::from_utf8_lossy(&decrypted_message);
-                                                                println!("Decrypted message: {}", message_text);
-                                                            },
-                                                            Err(e) => eprintln!("Failed to decrypt message: {}", e),
-                                                        }
+                        // check if this message is for this client (by comparing recipient_id to username)
+                        if recipient_id != username.trim() { // Hopefully does not happen
+                            eprintln!("Someone else not recorded is sending this message.")
+                        }
+
+                        // step 3: decode and decrypt symmetric key with the private key
+                        match STANDARD.decode(enc_sym_key4) {
+                            Ok(enc_sym_key_bytes) => {
+                                //println!("Decoded symmetric key bytes: {:?}", enc_sym_key_bytes);
+                                println!("Decoded symmetric key bytes");
+                                match personal_seckey.decrypt(Pkcs1v15Encrypt, &enc_sym_key_bytes) {
+                                    Ok(sym_key4) => {
+                                        //println!("Decrypted symmetric key: {:?}", sym_key4);
+                                        println!("Decrypted symmetric key");
+                                        // step 4: use the symmetric key to decrypt the message
+                                        let aes_gcm4 = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&sym_key4));
+                                        let nonce4 = Nonce::from_slice(&[0; 12]); // Same nonce as used in encryption
+
+                                        // decode encrypted message and do error checking
+                                        match STANDARD.decode(encrypted_message) {
+                                            Ok(encrypted_message_bytes) => {
+                                                //println!("Decoded encrypted message: {:?}", encrypted_message_bytes);
+                                                println!("Decoded encrypted message");
+                                                match aes_gcm4.decrypt(nonce4, encrypted_message_bytes.as_ref()) {
+                                                    Ok(decrypted_message) => {
+                                                        // convert decrypted message to string and print
+                                                        let message_text = String::from_utf8_lossy(&decrypted_message);
+                                                        println!("Decrypted message: {}", message_text);
                                                     },
-                                                    Err(e) => eprintln!("Failed to decode encrypted message: {}", e),
+                                                    Err(e) => eprintln!("Failed to decrypt message: {}", e),
                                                 }
                                             },
-                                            Err(e) => eprintln!("Failed to decrypt symmetric key: {}", e),
+                                            Err(e) => eprintln!("Failed to decode encrypted message: {}", e),
                                         }
                                     },
-                                    Err(e) => eprintln!("Failed to decode encrypted symmetric key: {}", e),
+                                    Err(e) => eprintln!("Failed to decrypt symmetric key: {}", e),
                                 }
-                            } else {
-                                println!("Received1: {}", received_message);
-                            }
-                        } else {
-                            println!("Received2: {}", received_message); 
+                            },
+                            Err(e) => eprintln!("Failed to decode encrypted symmetric key: {}", e),
                         }
                     }
                 }
@@ -215,6 +219,7 @@ fn parse_new_user_broadcast(message: &str) -> Option<(String, String)> {
     }
 }
 
+
 // eileen: basic onion encryption function
 // next steps include adding more information in the public key enryption part. 
 // right now we only include the symmetric key, next we need to include the index, current recipient, nonce, and verification hashes
@@ -229,7 +234,7 @@ fn onion_encrypt(
     // STEP 1: Start with the innermost encryption layer for the recipient
     // generate symmetric key for the recipient's layer (sym_K4)
     let sym_key4 = Aes256Gcm::generate_key(&mut rng);
-    let aes_gcm4 = Aes256Gcm::new(Key::from_slice(&sym_key4));
+    let aes_gcm4 = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&sym_key4));
     let nonce4 = Nonce::from_slice(&[0; 12]); // Constant nonce for simplicity
 
     // encrypt message with sym_K4
@@ -253,7 +258,7 @@ fn onion_encrypt(
     for (node_id, node_pubkey) in server_nodes.iter().rev() {
         // Generate symmetric key for the current layer
         let sym_key = Aes256Gcm::generate_key(&mut rng);
-        let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key));
+        let aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&sym_key));
         let nonce = Nonce::from_slice(&[0; 12]); // Constant nonce for simplicity
 
         // encrypt the current layer with the symmetric key

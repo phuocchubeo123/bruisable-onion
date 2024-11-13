@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::thread;
 use aes_gcm::{Aes256Gcm, Key, Nonce}; 
-use aes_gcm::aead::{Aead, NewAead};
+use aes_gcm::aead::{Aead, AeadCore, KeyInit};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::io::{BufRead, BufReader};
 
@@ -40,7 +40,7 @@ fn onion_decrypt(
         let sym_key_bytes = node_seckey.decrypt(Pkcs1v15Encrypt, &enc_sym_key_bytes)?;
 
         // decrypt the layer content using the symmetric key for the current layer
-        let aes_gcm = Aes256Gcm::new(Key::from_slice(&sym_key_bytes));
+        let aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&sym_key_bytes));
         let nonce = Nonce::from_slice(&[0; 12]); // Use a constant nonce
 
         let decrypted_layer = aes_gcm.decrypt(nonce, &*STANDARD.decode(encrypted_layer)?)?;
