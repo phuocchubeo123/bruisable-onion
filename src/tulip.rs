@@ -103,7 +103,7 @@ pub fn tulip_encrypt(
             for jj in 0..ell {
                 hasher.update(T[i][(j + jj) % (l1 + 2)].clone());
             }
-            let Aij = hasher.finalize();
+            let Aij = hasher.finalize().to_vec();
             vAi.push(Aij);
         }
         vAi.sort();
@@ -111,7 +111,7 @@ pub fn tulip_encrypt(
         // I try to turn the hashes in vAi into strings and concatenate them here.
         let vAi_string = vAi
             .iter()
-            .map(|x| STANDARD.encode(x))
+            .map(|x| STANDARD.encode(x.as_slice())) // I think this encode should be correct, it should also decode into a slice
             .collect::<Vec<_>>()
             .join(",");
 
@@ -157,7 +157,7 @@ pub fn tulip_encrypt(
     // Create content
     let aes_gcm_gatekeeper_last = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&master_key));
     let nonce_gatekeeper_last = Nonce::from_slice(y[l-2]); // last gatekeeper nonce for simplicity
-    let c = aes_gcm_gatekeeper_last.encrypt(nonce_gatekeeper_last, c.as_slice())?; // content for the last gatekeeper is the encryption of c_last under master_key
+    c = aes_gcm_gatekeeper_last.encrypt(nonce_gatekeeper_last, c.as_slice())?; // content for the last gatekeeper is the encryption of c_last under master_key
 
     // Global B array for later use also
     let mut B =  Vec::<_>::new();
@@ -211,7 +211,7 @@ pub fn tulip_encrypt(
 
         let aes_gcm_gatekeeper = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&current_layer_key));
         let nonce_gatekeeper = Nonce::from_slice(current_layer_nonce); // Constant nonce for simplicity
-        let c = aes_gcm_gatekeeper.encrypt(nonce_gatekeeper, c.as_slice())?;  // content
+        c = aes_gcm_gatekeeper.encrypt(nonce_gatekeeper, c.as_slice())?;  // content
 
         for i in 0..B.len() {
             B[i] = aes_gcm_gatekeeper.encrypt(nonce_gatekeeper, B[i].as_slice()).expect("Cannot encrypt new B");
@@ -230,7 +230,7 @@ pub fn tulip_encrypt(
         for bij in B.iter().rev() {
             hasher_gatekeeper.update(bij);
         }
-        hasher_gatekeeper.update(c);
+        hasher_gatekeeper.update(c.clone());
         let t_gatekeeper = hasher_gatekeeper.finalize(); // the tag
 
         // Create E
@@ -258,7 +258,7 @@ pub fn tulip_encrypt(
 
     let aes_gcm_mixer_last = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&k[l1-1]));
     let nonce_mixer_last = Nonce::from_slice(y[l1-1]);
-    let c = aes_gcm_mixer_last.encrypt(nonce_mixer_last, c.as_slice())?;  // global c for content
+    c = aes_gcm_mixer_last.encrypt(nonce_mixer_last, c.as_slice())?;  // global c for content
 
     for i in 0..B.len() { // wrap already existed Bi
         B[i] = aes_gcm_mixer_last.encrypt(nonce_mixer_last, B[i].as_slice()).expect("Cannot encrypt new B");
@@ -281,8 +281,8 @@ pub fn tulip_encrypt(
     let t_mixer_last = hasher_mixer_last.finalize(); // the tag
 
     // Create E
-    let e_mixer_last = format!(
-        "Mixer|{}|{}|{}|{}|{}",
+    let e_mixer_last = format!( 
+        "LastMixer|{}|{}|{}|{}|{}",
         STANDARD.encode(&t_mixer_last),
         l1-1,
         STANDARD.encode(&k[l1-1]),
@@ -371,7 +371,7 @@ pub fn tulip_decrypt(
     tulip: &str,
     node_id: &str,
     node_seckey: &RsaPrivateKey,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<(String, String), Box<dyn std::error::Error>> {
     // This function is only for one node to process the onion that is sent to this node
 
     let tulip_string = tulip.to_string(); // just a placeholder to translate any &str into string
@@ -382,12 +382,8 @@ pub fn tulip_decrypt(
         return Err("Invalid onion layer format".into());
     }
 
-    let H = parts[0]; // Header
-    let c = parts[1]; // content
-    let S_nonce_string = parts[2]; // sepal_nonce
-    let S_enc_string = parts[3]; // sepal_enc
-
     // Step 1: Process header
+    let H = parts[0]; // Header
 
     let H_string = H.to_string();
     let H_parts: Vec<&str> = H_string.split(',').collect();
@@ -397,8 +393,6 @@ pub fn tulip_decrypt(
     let e = node_seckey.decrypt(Pkcs1v15Encrypt, &E)?;
     let e_string = str::from_utf8(e.as_slice()).unwrap().to_string();
     let e_parts: Vec<&str> = e_string.split('|').collect();
-
-    let t = STANDARD.decode(e_parts[0])?; // t_i
 
     let role = e_parts[1].to_string(); // role
     if role == "Recipient" {
@@ -411,34 +405,106 @@ pub fn tulip_decrypt(
     // Get the layer key
     let layer_key = STANDARD.decode(e_parts[3])?;
     let aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&layer_key));
+    let layer_nonce_bytes = STANDARD.decode(e_parts[4])?; 
+    let layer_nonce = Nonce::from_slice(&layer_nonce_bytes);
 
     // Other metadata
-    let layer_nonce = STANDARD.decode(e_parts[4])?; 
     let vAi_string = e_parts[5].to_string();
+    let vAi = vAi_string
+        .split(",")
+        .map(|x| STANDARD.decode(x).expect("Failed to decode a hash in vAi."))
+        .collect::<Vec<_>>();
 
 
-    // Now I want to check vAi_string hashes, does this list include the hash of the sepal?
-    // First process the sepal
-    let S_nonce = S_nonce_string.split(',').map(|x| STANDARD.decode(x).expect("Failed to decode sepal nonce!")).collect::<Vec<_>>();
-    let S_enc = S_enc_string.split(',').map(|x| STANDARD.decode(x).expect("Failed to decode sepal encrypted.")).collect::<Vec<_>>();
+    // Step 2: Process the sepal and check the sepal
+
+    let S_nonce_string = parts[2]; // sepal_nonce
+    let S_enc_string = parts[3]; // sepal_enc
+
+    let mut S_nonce = S_nonce_string.split(',').map(|x| STANDARD.decode(x).expect("Failed to decode sepal nonce!")).collect::<Vec<_>>();
+    let mut S_enc = S_enc_string.split(',').map(|x| STANDARD.decode(x).expect("Failed to decode sepal encrypted.")).collect::<Vec<_>>();
 
     // decrypt, also make sepal for next layer
-    for (s_nonce, s_enc) in S_nonce.iter().zip(S_enc.iter()) {
-        let nonce = Nonce::from_slice(s_nonce);
-        let sepal_block = aes_gcm.decrypt(nonce, s_enc.as_slice())?;
+    for i in 0..S_nonce.len() {
+        let nonce = Nonce::from_slice(&S_nonce[i]);
+        S_enc[i] = aes_gcm.decrypt(nonce, S_enc[i].as_slice())?;
+    }
+
+    // get the hash and check if it is in vAi
+    let mut sepal_hasher = Sha256::new();
+    for s_enc in S_enc.iter() {
+        sepal_hasher.update(s_enc);
+    }
+
+    let sepal_hash = sepal_hasher.finalize().to_vec();
+
+    if vAi.iter().any(|x| x == sepal_hash.as_slice()) == false {
+        eprintln!("Malleable sepal!");
     }
 
 
-    // Process B
+
+    // Step 3: Process content and check the tag
+    let c_encrypted = parts[1]; // content
+    let c = aes_gcm.decrypt(&layer_nonce, &*STANDARD.decode(c_encrypted)?)?;
+
+    // Process B and compute the hash
+    let b1 = STANDARD.decode(H_parts[1])?; // read b1 separately because it is not sent to the next person
 
     let mut B = Vec::<_>::new();
-    for i in 1..H_parts.len() {
+    for i in 2..H_parts.len() {
         B.push(STANDARD.decode(H_parts[i]).expect("Decoding Bij failed!"));
     }
 
+    let mut content_hasher = Sha256::new();
+    content_hasher.update(b1.clone());
+    for bij in B.iter() {
+        content_hasher.update(bij);
+    }
+    content_hasher.update(c.clone());
+    let ref_tag = content_hasher.finalize(); // compute the hash of content and blocks
+    let t = STANDARD.decode(e_parts[0])?; // read the tag
+
+    if t != ref_tag.to_vec() { // hopefully to_vec keeps the hash the same
+        eprintln!("Some party sent the wrong content!");
+    }
 
 
-    let next_message = "NOT COMPLETE".to_string();
+    // Step 4: Peel every Bi and output the message to the next person
+    // If the role is Mixer, currently we consider only honest Mixer and it just "peels" the sepal
 
-    Ok(next_message)
+    // decrypt b1 
+    let b1_decrypted = aes_gcm.decrypt(&layer_nonce, b1.as_slice())?;
+    let b1_string = String::from_utf8_lossy(&b1_decrypted).into_owned();
+    let b1_parts = b1_string.split("|").collect::<Vec<_>>();
+
+    let next_person = b1_parts[0].to_string();
+    let next_E = STANDARD.decode(b1_parts[1])?;
+
+    // decrypt all other bi
+    for i in 0..B.len() {
+        B[i] = aes_gcm.decrypt(&layer_nonce, B[i].as_slice())?;
+    }
+
+    // create header
+    let next_H = format!(
+        "{}|{}",
+        STANDARD.encode(&next_E),
+        B.iter().map(|x| STANDARD.encode(x)).rev().collect::<Vec<_>>().join(","),
+    );
+
+    // peels the sepal
+    S_nonce.pop();
+    S_enc.pop();
+
+    // Step 5: Now, we are ready to create the next message
+    let next_message = format!(
+        "{}|{}|{}|{}",
+        next_H,
+        STANDARD.encode(&c),
+        S_nonce.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),
+        S_enc.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),
+    );
+
+    Ok((next_person, next_message))
 }
