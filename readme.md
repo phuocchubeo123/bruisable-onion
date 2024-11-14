@@ -141,3 +141,12 @@ NEXT STEPS:
 7. Add checkpoint onions & move Onion into a seperate class
 8. Think about the network
 
+
+
+Meet with Kinan Check-In Next Steps:
+1. need to implement bruisable onion and test it
+2. Run tests:
+    1. test on end to end delivery (between Alice to Bob times) and compare between basic onion scheme and bruisable onion scheme
+    2. mini-benchmark tests (like on just how long it takes Alice to encrypt or how long it takes intermediary nodes to decrypt)
+    3. Graphs to show how message length affects timing, and how number of intermediary nodes affects timing.
+
