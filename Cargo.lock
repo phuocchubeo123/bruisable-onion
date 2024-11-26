@@ -110,7 +110,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bruise-onion"
+name = "bruise_onion"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",

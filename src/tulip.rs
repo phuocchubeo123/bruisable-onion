@@ -42,14 +42,19 @@ pub fn tulip_encrypt(
 
     for master_key_block in 0..max_bruise.clone() {
         let mut enc_master_key = master_key.as_slice().to_vec(); // stupid workaround to copy the master key
-        let nonce = Aes256Gcm::generate_nonce(&mut rng); // Currently, I use the same nonce for every layer, I hope that it is safe
+        let nonce = Aes256Gcm::generate_nonce(&mut rng); // Same nonce for every layer
         for layer_key in k.iter().take(l-1).rev() { // iterate from near-last to first
             let aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&layer_key));
+            // let new_enc_master_key = aes_gcm.encrypt(&nonce, enc_master_key.as_slice()).expect("Encryption Failed!");
             enc_master_key = aes_gcm.encrypt(&nonce, enc_master_key.as_slice()).expect("Encryption Failed!");
+
+            // let dummy = aes_gcm.decrypt(&nonce, new_enc_master_key.as_slice()).expect("Can we decrypt back right away?");
+            // println!("Is this decryption correct? {}", dummy == enc_master_key);
         }
 
         S_nonce.push(nonce);
-        S_enc.push(enc_master_key);
+        S_enc.push(enc_master_key.clone());
+
     }
 
     for null_block in 0..(l1 - max_bruise + 1) {
@@ -64,21 +69,50 @@ pub fn tulip_encrypt(
         S_enc.push(enc_null);
     }
 
+    let mut dummy_key = S_enc[0].clone();
+    let dummy_nonce = S_nonce[0].clone();
+
+    for layer_key in k.iter().take(l-1) {
+        let dummy_aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&layer_key));
+
+        dummy_key = dummy_aes_gcm.decrypt(&dummy_nonce, dummy_key.as_slice()).expect("Cannot decrypt dummy key");
+    }
+
+
     // Creating the clasp
 
     // Creating Tij
     let mut T = Vec::<Vec<_>>::new(); // Tij is the sepal block S1j without the i-1 outermost encryption layers
     T.push(S_enc.clone());
+
     for (layer_id, layer_key) in (1..l).zip(k.iter().take(l-1)) { // each time peel one layer, left to right
         let aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&layer_key));
-        let Ti: Vec<_> = (0..(l1+1))
-            .map(|i| aes_gcm.decrypt(&S_nonce[i], T[layer_id-1][i].as_slice()).expect("Cannot decrypt the sepal layer"))
-            .collect();
+        let mut Ti = Vec::<_>::new();
+
+        for master_key_block in 0..max_bruise.clone() {
+            let nonce = S_nonce[master_key_block].clone();
+            let master_key = T[layer_id-1][master_key_block].clone();
+            let master_key_unwrapped = aes_gcm.decrypt(&nonce, master_key.as_slice()).expect("Cannot decrypt sepal block");
+            Ti.push(master_key_unwrapped);
+        }
+
+        for null_block in 0..(l1-max_bruise+1) {
+            let nonce = S_nonce[null_block].clone();
+            let master_key = T[layer_id-1][null_block].clone();
+            let master_key_unwrapped = aes_gcm.decrypt(&nonce, master_key.as_slice()).expect("Cannot decrypt sepal block");
+            Ti.push(master_key_unwrapped);
+        }
+
+        // let Ti: Vec<_> = (0..(l1+1))
+        //     .map(|i| aes_gcm.decrypt(&S_nonce[i], T[layer_id-1][i].as_slice()).expect("Cannot decrypt the sepal layer"))
+        //     .collect();
         T.push(Ti);
     }
 
+    println!("Done creating the sepal!");
+
     // The hash that contains the dummy sepal block would not matter!
-    for i in 0..l1 {  // Put a dummy sepal block T_{i, l1+2} in
+    for i in 0..l {  // Put a dummy sepal block T_{i, l1+2} in
         let mut enc_rand = vec![0u8; master_key.as_slice().to_vec().len()]; // placeholder for random string with the same length as the master key
         OsRng.fill_bytes(&mut enc_rand); // fill enc_rand with random bytes
         let nonce = Nonce::from_slice(&[0; 12]); // Zero-nonce is okay since it's random anyway 
@@ -88,6 +122,10 @@ pub fn tulip_encrypt(
         }
         T[i].push(enc_rand);
     }
+
+
+
+    println!("Done creating the clasp.");
 
     // Creating Aij, vAi
 
@@ -106,6 +144,8 @@ pub fn tulip_encrypt(
             let Aij = hasher.finalize().to_vec();
             vAi.push(Aij);
         }
+
+        println!("done creating vAi!");
         vAi.sort();
 
         // I try to turn the hashes in vAi into strings and concatenate them here.
@@ -117,6 +157,8 @@ pub fn tulip_encrypt(
 
         vA.push(vAi_string);
     }
+
+    println!("Done creating the vA vectors");
 
 
     // Step 2: Forming the header and content for the last onion layer
