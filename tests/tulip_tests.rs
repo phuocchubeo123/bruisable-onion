@@ -3,7 +3,7 @@ use rsa::{RsaPrivateKey, RsaPublicKey};
 use rand::rngs::OsRng;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use bruise_onion::crypto::read_pubkey_list;
+use bruise_onion::crypto::{read_pubkey_list, read_seckey_list};
 
 fn generate_test_keys() -> (RsaPrivateKey, RsaPublicKey) {
     let mut rng = OsRng;
@@ -26,6 +26,8 @@ fn test_tulip_encrypt_output_format() {
     ));
 
     println!("Loaded server public keys from PKKeys.txt");
+
+    let (server_ids_2, server_seckeys) = read_seckey_list("SKKeys.txt").expect("Failed to read server secret keys from SKKeys.txt");
 
     let (usernames, user_pubkeys) = read_pubkey_list("UserKeys.txt").expect("Failed to read user public keys from UserKeys.txt");
     let existing_users = Arc::new(Mutex::new(
@@ -64,4 +66,8 @@ fn test_tulip_encrypt_output_format() {
     assert!(result.is_ok(), "tulip_encrypt failed: {:?}", result);
     let encrypted_onion = result.unwrap();
     assert!(encrypted_onion.contains("|"), "Encrypted onion missing separators");
+
+    // First mixer
+    let (mixer_id, mixer_pubkey) = mixers[0];
+
 }

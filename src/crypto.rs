@@ -1,7 +1,7 @@
 extern crate rsa;
 extern crate rand;
 
-use rsa::{RsaPrivateKey, RsaPublicKey, Oaep, sha2::Sha256, pkcs1::{EncodeRsaPublicKey, DecodeRsaPublicKey, LineEnding}};
+use rsa::{RsaPrivateKey, RsaPublicKey, Oaep, sha2::Sha256, pkcs1::{EncodeRsaPublicKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, DecodeRsaPrivateKey, LineEnding}};
 use rand::{rngs::OsRng, Rng};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, BufRead, Write, Read};
@@ -52,6 +52,22 @@ pub fn dump_pubkey_list(ids: &Vec<String>, pubkeys: &[RsaPublicKey], filename: &
     Ok(())
 }
 
+pub fn dump_seckey_list(ids: &Vec<String>, seckeys: &[RsaPrivateKey], filename: &str) -> std::io::Result<()> {
+    let path = Path::new(filename);
+    let file = File::create(&path)?;
+    let mut writer = BufWriter::new(file);
+
+    for (id, seckey) in ids.iter().zip(seckeys.iter()) {
+        // Write the ID
+        writeln!(writer, "ID: {}", id)?;
+        // Write the public key in PKCS#1 PEM format
+        let seckey_pem = seckey.to_pkcs1_pem(LineEnding::LF).expect("failed to encode public key to PEM");
+        writeln!(writer, "{}", *seckey_pem)?;
+    }
+
+    Ok(())
+}
+
 pub fn read_pubkey_list(filename: &str) -> std::io::Result<(Vec<String>, Vec<RsaPublicKey>)> {
     let path = Path::new(filename);
     let file = File::open(&path)?;
@@ -88,6 +104,44 @@ pub fn read_pubkey_list(filename: &str) -> std::io::Result<(Vec<String>, Vec<Rsa
     }
 
     Ok((ids, pubkeys))
+}
+
+pub fn read_seckey_list(filename: &str) -> std::io::Result<(Vec<String>, Vec<RsaPrivateKey>)> {
+    let path = Path::new(filename);
+    let file = File::open(&path)?;
+    let mut reader = io::BufReader::new(file);
+
+    let mut ids = Vec::new();
+    let mut seckeys = Vec::new();
+    let mut buffer = String::new();
+
+    while reader.read_line(&mut buffer)? > 0 {
+        // println!("Current line: {}", buffer);
+        if buffer.starts_with("ID: ") {
+            let id = buffer["ID: ".len()..].trim().parse::<String>().expect("failed to parse ID");
+            ids.push(id);
+            buffer.clear();
+        } else if buffer.starts_with("-----BEGIN RSA PRIVATE KEY-----") {
+            let mut pem = buffer.clone();
+            buffer.clear();
+            while reader.read_line(&mut buffer)? > 0 {
+                pem.push_str(&buffer);
+                if buffer.starts_with("-----END RSA PRIVATE KEY-----") {
+                    buffer.clear();
+                    // println!("FOUND AN END: {}", buffer);
+                    break;
+                }
+                buffer.clear();
+            }
+
+            // println!("Current PEM: {}", pem);
+            let seckey = RsaPrivateKey::from_pkcs1_pem(&pem).expect("failed to parse public key from PEM");
+            seckeys.push(seckey);
+        }
+        buffer.clear();
+    }
+
+    Ok((ids, seckeys))
 }
 
 pub fn reset_user_list(filename: &str) -> std::io::Result<()> {

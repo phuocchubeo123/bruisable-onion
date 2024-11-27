@@ -1,7 +1,7 @@
 extern crate rsa;
 mod crypto;
 
-use crypto::{generate_pubkey_list, dump_pubkey_list, reset_user_list, update_user_list};
+use crypto::{generate_pubkey_list, dump_pubkey_list, dump_seckey_list, reset_user_list, update_user_list};
 use rsa::{RsaPublicKey, pkcs1::DecodeRsaPublicKey, RsaPrivateKey, Pkcs1v15Encrypt};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -240,6 +240,11 @@ fn main() {
         Ok(_) => println!("Successfully written pseudo keys to PKKeys.txt!"),
         Err(e) => eprintln!("Failed to write to PKKeys.txt: {}", e),
     };
+
+    match dump_seckey_list(&ids, &seckeys_vec, "SKKeys.txt") {
+        Ok(_) => println!("Successfully written secret keys of intermediate nodes to SKKeys.txt!"),
+        Err(e) => eprintln!("Failed to write to SKKeys.txt: {}", e),
+    }
 
     // Load server public keys and private keys into the HashMaps
     {
