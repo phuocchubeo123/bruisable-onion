@@ -244,7 +244,7 @@ pub fn tulip_encrypt(
     println!("Created E for the last gatekeeper: {}|{}", STANDARD.encode(&E1), STANDARD.encode(&E2));
 
     H = format!(
-        "{}|{}|{}",
+        "{},,{},,{}",
         STANDARD.encode(&E1),
         STANDARD.encode(&E2),
         STANDARD.encode(&B[0])
@@ -314,7 +314,7 @@ pub fn tulip_encrypt(
         E2 = current_gatekeeper_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e2_gatekeeper.as_bytes())?;
 
         H = format!(
-            "{}|{}|{}",
+            "{},,{},,{}",
             STANDARD.encode(&E1),
             STANDARD.encode(&E2),
             B.iter().map(|x| STANDARD.encode(&x)).rev().collect::<Vec<_>>().join(","),
@@ -375,7 +375,7 @@ pub fn tulip_encrypt(
     E2 = pubkey_mixer_last.encrypt(&mut rng, Pkcs1v15Encrypt, e2_mixer_last.as_bytes())?;
 
     H = format!(
-        "{}|{}|{}",
+        "{},,{},,{}",
         STANDARD.encode(&E1),
         STANDARD.encode(&E2),
         B.iter().map(|x| STANDARD.encode(&x)).rev().collect::<Vec<_>>().join(","),
@@ -395,6 +395,9 @@ pub fn tulip_encrypt(
         let current_mixer_pubkey = mixers[hop_index].1; // pk(P_i)
         let current_layer_key = k[hop_index]; // k_i
         let current_layer_nonce = y[hop_index]; // y_i
+
+        let pubkey_pem = current_mixer_pubkey.to_pkcs1_pem(LineEnding::LF).expect("failed to encode public key to PEM");
+        println!("Curent pubkey: {}", pubkey_pem);
 
         let aes_gcm_mixer = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&current_layer_key));
         let nonce_mixer = Nonce::from_slice(current_layer_nonce); // Constant nonce for simplicity
@@ -441,16 +444,18 @@ pub fn tulip_encrypt(
         E2 = current_mixer_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e2_mixer.as_bytes())?;
 
         H = format!(
-            "{}|{}|{}",
+            "{},,{},,{}",
             STANDARD.encode(&E1),
             STANDARD.encode(&E2),
             B.iter().map(|x| STANDARD.encode(x)).rev().collect::<Vec<_>>().join(",")
         );
+
+        println!("Created header for the current mixer: {}", H);
     }
 
 
     let final_onion = format!(     // I will change the message format a bit. It will be: Header | Content | Sepal_nonce | Sepal_enc
-        "{}|{}|{}|{}\n",
+        "{}||{}||{}||{}\n",
         H,
         STANDARD.encode(&c),
         S_nonce.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),
@@ -469,7 +474,11 @@ pub fn tulip_decrypt(
 
     let tulip_string = tulip.to_string(); // just a placeholder to translate any &str into string
 
-    let parts: Vec<&str> = tulip_string.split('|').collect();
+    println!("Received tulip: {}", tulip_string);
+
+    let parts: Vec<&str> = tulip_string.split("||").collect();
+
+    println!("Number of parts: {}", parts.len());
 
     if parts.len() != 4 {
         return Err("Invalid onion layer format".into());
@@ -477,32 +486,52 @@ pub fn tulip_decrypt(
 
     // Step 1: Process header
     let H = parts[0]; // Header
-
     let H_string = H.to_string();
-    let H_parts: Vec<&str> = H_string.split(',').collect();
+    let H_parts: Vec<&str> = H_string.split(",,").collect();
 
-    // Process E
-    let E = STANDARD.decode(H_parts[0])?; // E_i
-    let e = node_seckey.decrypt(Pkcs1v15Encrypt, &E)?;
-    let e_string = str::from_utf8(e.as_slice()).unwrap().to_string();
-    let e_parts: Vec<&str> = e_string.split('|').collect();
+    println!("Received header: {}", H_string);
+    println!("The header has {} parts!", H_parts.len());
 
-    let role = e_parts[1].to_string(); // role
+
+    // Process E1, which is role | tag | hop_index | key
+    let E1 = STANDARD.decode(H_parts[0])?; // E_i
+    let e1 = node_seckey.decrypt(Pkcs1v15Encrypt, &E1)?;
+    let e1_string = str::from_utf8(e1.as_slice()).unwrap().to_string();
+    let e1_parts: Vec<&str> = e1_string.split('|').collect();
+
+    println!("Received e1: {}", e1_string);
+
+    // Get role
+    let role = e1_parts[1].to_string(); // role
     if role == "Recipient" {
         eprintln!("Something's wrong! Cannot let the server know the message for recipient!");
     }
 
-    let hop_index_string = e_parts[2].to_string();
+    println!("Received the role: {}", role);
+
+    // Get hop_index
+    let hop_index_string = e1_parts[2].to_string();
     let hop_index = hop_index_string.parse::<usize>().unwrap(); // parse hop_index as usize
 
-    // Get the layer key
-    let layer_key = STANDARD.decode(e_parts[3])?;
+    println!("Received the hop index: {}", hop_index);
+
+    // Process E2, which is nonce | vA
+    let E2 = STANDARD.decode(H_parts[0])?; // E_i
+    let e2 = node_seckey.decrypt(Pkcs1v15Encrypt, &E2)?;
+    let e2_string = str::from_utf8(e2.as_slice()).unwrap().to_string();
+    let e2_parts: Vec<&str> = e2_string.split('|').collect();
+
+    println!("Received e2: {}", e2_string);
+
+    // Get layer key and nonce
+    let layer_key = STANDARD.decode(e1_parts[3])?;
     let aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&layer_key));
-    let layer_nonce_bytes = STANDARD.decode(e_parts[4])?; 
+
+    let layer_nonce_bytes = STANDARD.decode(e2_parts[0])?; 
     let layer_nonce = Nonce::from_slice(&layer_nonce_bytes);
 
-    // Other metadata
-    let vAi_string = e_parts[5].to_string();
+    // Get verification hashes for the sepal
+    let vAi_string = e2_parts[1].to_string();
     let vAi = vAi_string
         .split(",")
         .map(|x| STANDARD.decode(x).expect("Failed to decode a hash in vAi."))
@@ -556,7 +585,7 @@ pub fn tulip_decrypt(
     }
     content_hasher.update(c.clone());
     let ref_tag = content_hasher.finalize(); // compute the hash of content and blocks
-    let t = STANDARD.decode(e_parts[0])?; // read the tag
+    let t = STANDARD.decode(e1_parts[0])?; // read the tag
 
     if t != ref_tag.to_vec() { // hopefully to_vec keeps the hash the same
         eprintln!("Some party sent the wrong content!");
@@ -581,7 +610,7 @@ pub fn tulip_decrypt(
 
     // create header
     let next_H = format!(
-        "{}|{}",
+        "{}||{}",
         STANDARD.encode(&next_E),
         B.iter().map(|x| STANDARD.encode(x)).rev().collect::<Vec<_>>().join(","),
     );
@@ -592,7 +621,7 @@ pub fn tulip_decrypt(
 
     // Step 5: Now, we are ready to create the next message
     let next_message = format!(
-        "{}|{}|{}|{}",
+        "{}||{}||{}||{}",
         next_H,
         STANDARD.encode(&c),
         S_nonce.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),

@@ -1,5 +1,6 @@
-use bruise_onion::tulip::tulip_encrypt;
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use bruise_onion::tulip::{tulip_decrypt, tulip_encrypt};
+use rsa::{pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, EncodeRsaPublicKey, LineEnding}, sha2::Sha256, Oaep, Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
 use rand::rngs::OsRng;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -28,6 +29,7 @@ fn test_tulip_encrypt_output_format() {
     println!("Loaded server public keys from PKKeys.txt");
 
     let (server_ids_2, server_seckeys) = read_seckey_list("SKKeys.txt").expect("Failed to read server secret keys from SKKeys.txt");
+    println!("Loaded server secret keys from SKKeys.txt");
 
     let (usernames, user_pubkeys) = read_pubkey_list("UserKeys.txt").expect("Failed to read user public keys from UserKeys.txt");
     let existing_users = Arc::new(Mutex::new(
@@ -64,10 +66,38 @@ fn test_tulip_encrypt_output_format() {
     println!("Result: {:?}", result);
 
     assert!(result.is_ok(), "tulip_encrypt failed: {:?}", result);
-    let encrypted_onion = result.unwrap();
-    assert!(encrypted_onion.contains("|"), "Encrypted onion missing separators");
+    let encrypted_tulip = result.unwrap();
+    assert!(encrypted_tulip.contains("|"), "Encrypted onion missing separators");
+
+    println!("Done encrypting tulip!");
 
     // First mixer
     let (mixer_id, mixer_pubkey) = mixers[0];
+    let mixer_seckey = server_seckeys[0].clone();
+
+    let pubkey_pem = mixer_pubkey.to_pkcs1_pem(LineEnding::LF).expect("failed to encode public key to PEM");
+    println!("Curent pubkey: {}", pubkey_pem);
+
+    let seckey_pem = mixer_seckey.to_pkcs1_pem(LineEnding::LF).expect("failed to encode private key to PEM");
+    println!("Current seckey: {}", *seckey_pem);
+
+    println!("Trying to test the first mixer...");
+
+    let result_decrypt = tulip_decrypt(&encrypted_tulip, mixer_id, &mixer_seckey);
+
+    println!("Tulip Decrypt result: {:?}", result_decrypt);
+
+
+    let mut rng = OsRng; 
+    let test_msg = "Hello World";
+
+    let dummy_privkey = RsaPrivateKey::new(&mut rng, 2048).expect("Failed to generate a private key");
+    let dummy_pubkey = RsaPublicKey::from(&dummy_privkey);
+    let u1 = dummy_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, test_msg.as_bytes()).expect("Failed to encrypt Hello World!");
+    println!("Encrypted Hello World: {}", STANDARD.encode(&u1));
+    let u2 = dummy_privkey.decrypt(Pkcs1v15Encrypt, &u1).expect("Failed to decrypt Hello World!"); 
+    println!("Decrypted Hello World: {}", STANDARD.encode(&u2));
+
+
 
 }
