@@ -2,6 +2,7 @@ extern crate rsa;
 extern crate rand;
 
 use rsa::{RsaPrivateKey, RsaPublicKey, Oaep, sha2::Sha256, pkcs1::{EncodeRsaPublicKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, DecodeRsaPrivateKey, LineEnding}};
+use rsa::pkcs8::{EncodePrivateKey, DecodePrivateKey};
 use rand::{rngs::OsRng, Rng};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, BufRead, Write, Read};
@@ -61,7 +62,7 @@ pub fn dump_seckey_list(ids: &Vec<String>, seckeys: &[RsaPrivateKey], filename: 
         // Write the ID
         writeln!(writer, "ID: {}", id)?;
         // Write the public key in PKCS#1 PEM format
-        let seckey_pem = seckey.to_pkcs1_pem(LineEnding::LF).expect("failed to encode public key to PEM");
+        let seckey_pem = seckey.to_pkcs1_pem(rsa::pkcs1::LineEnding::LF).expect("failed to encode public key to PEM");
         writeln!(writer, "{}", *seckey_pem)?;
     }
 
@@ -134,8 +135,8 @@ pub fn read_seckey_list(filename: &str) -> std::io::Result<(Vec<String>, Vec<Rsa
                 buffer.clear();
             }
 
-            // println!("Current PEM: {}", pem);
-            let seckey = RsaPrivateKey::from_pkcs1_pem(&pem).expect("failed to parse public key from PEM");
+            println!("Current PEM: {}", pem);
+            let seckey = RsaPrivateKey::from_pkcs1_pem(&pem).expect("failed to parse secret key from PEM");
             seckeys.push(seckey);
         }
         buffer.clear();

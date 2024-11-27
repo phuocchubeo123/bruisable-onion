@@ -69,16 +69,6 @@ pub fn tulip_encrypt(
         S_enc.push(enc_null);
     }
 
-    let mut dummy_key = S_enc[0].clone();
-    let dummy_nonce = S_nonce[0].clone();
-
-    for layer_key in k.iter().take(l-1) {
-        let dummy_aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&layer_key));
-
-        dummy_key = dummy_aes_gcm.decrypt(&dummy_nonce, dummy_key.as_slice()).expect("Cannot decrypt dummy key");
-    }
-
-
     // Creating the clasp
 
     // Creating Tij
@@ -453,13 +443,17 @@ pub fn tulip_encrypt(
         println!("Created header for the current mixer: {}", H);
     }
 
+    for uu in S_enc.iter() {
+        println!("We have a sepal here: {}", STANDARD.encode(uu));
+    }
+
 
     let final_onion = format!(     // I will change the message format a bit. It will be: Header | Content | Sepal_nonce | Sepal_enc
-        "{}||{}||{}||{}\n",
+        "{}||{}||{}||{}||\n",
         H,
         STANDARD.encode(&c),
-        S_nonce.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),
-        S_enc.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),
+        S_nonce.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(",,"),
+        S_enc.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(",,"),
     );
 
     Ok(final_onion)
@@ -480,7 +474,7 @@ pub fn tulip_decrypt(
 
     println!("Number of parts: {}", parts.len());
 
-    if parts.len() != 4 {
+    if parts.len() != 5 {
         return Err("Invalid onion layer format".into());
     }
 
@@ -502,7 +496,7 @@ pub fn tulip_decrypt(
     println!("Received e1: {}", e1_string);
 
     // Get role
-    let role = e1_parts[1].to_string(); // role
+    let role = e1_parts[0].to_string(); // role
     if role == "Recipient" {
         eprintln!("Something's wrong! Cannot let the server know the message for recipient!");
     }
@@ -516,7 +510,7 @@ pub fn tulip_decrypt(
     println!("Received the hop index: {}", hop_index);
 
     // Process E2, which is nonce | vA
-    let E2 = STANDARD.decode(H_parts[0])?; // E_i
+    let E2 = STANDARD.decode(H_parts[1])?; // E2
     let e2 = node_seckey.decrypt(Pkcs1v15Encrypt, &E2)?;
     let e2_string = str::from_utf8(e2.as_slice()).unwrap().to_string();
     let e2_parts: Vec<&str> = e2_string.split('|').collect();
@@ -543,8 +537,17 @@ pub fn tulip_decrypt(
     let S_nonce_string = parts[2]; // sepal_nonce
     let S_enc_string = parts[3]; // sepal_enc
 
-    let mut S_nonce = S_nonce_string.split(',').map(|x| STANDARD.decode(x).expect("Failed to decode sepal nonce!")).collect::<Vec<_>>();
-    let mut S_enc = S_enc_string.split(',').map(|x| STANDARD.decode(x).expect("Failed to decode sepal encrypted.")).collect::<Vec<_>>();
+    let mut S_nonce = S_nonce_string.split(",,").map(|x| STANDARD.decode(x).expect("Failed to decode sepal nonce!")).collect::<Vec<_>>();
+
+    println!("How many nonces: {}", S_nonce.len());
+
+    for uu in S_enc_string.split(",,") {
+        println!("{}", uu.to_string());
+        println!("{:?}", STANDARD.decode(uu).expect("Fail to decode"));
+    }
+
+    let mut S_enc = S_enc_string.split(",,").map(|x| STANDARD.decode(x).expect("Failed to decode sepal encrypted.")).collect::<Vec<_>>();
+    println!("How many sepals: {}", S_enc.len());
 
     // decrypt, also make sepal for next layer
     for i in 0..S_nonce.len() {
@@ -585,7 +588,7 @@ pub fn tulip_decrypt(
     }
     content_hasher.update(c.clone());
     let ref_tag = content_hasher.finalize(); // compute the hash of content and blocks
-    let t = STANDARD.decode(e1_parts[0])?; // read the tag
+    let t = STANDARD.decode(e1_parts[1])?; // read the tag
 
     if t != ref_tag.to_vec() { // hopefully to_vec keeps the hash the same
         eprintln!("Some party sent the wrong content!");

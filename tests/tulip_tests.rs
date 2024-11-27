@@ -4,7 +4,9 @@ use rsa::{pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, 
 use rand::rngs::OsRng;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use bruise_onion::crypto::{read_pubkey_list, read_seckey_list};
+use bruise_onion::crypto::{generate_pubkey_list, dump_pubkey_list, dump_seckey_list, read_pubkey_list, read_seckey_list};
+use std::thread;
+use std::time::Duration;
 
 fn generate_test_keys() -> (RsaPrivateKey, RsaPublicKey) {
     let mut rng = OsRng;
@@ -21,14 +23,31 @@ fn generate_test_nonces(num_layers: usize) -> Vec<[u8; 12]> {
 #[test]
 fn test_tulip_encrypt_output_format() {
     // Read the public keys from the files (this is your existing code)
+    // let n = 6;
+    // let (ids, create_seckeys, create_pubkeys) = generate_pubkey_list(n);
+
+    // match dump_pubkey_list(&ids, &create_pubkeys, "PKKeys.txt") {
+    //     Ok(_) => println!("Successfully written pseudo keys to PKKeys.txt!"),
+    //     Err(e) => eprintln!("Failed to write to PKKeys.txt: {}", e),
+    // };
+
+    // match dump_seckey_list(&ids, &create_seckeys, "SKKeys.txt") {
+    //     Ok(_) => println!("Successfully written secret keys of intermediate nodes to SKKeys.txt!"),
+    //     Err(e) => eprintln!("Failed to write to SKKeys.txt: {}", e),
+    // }
+
+    // println!("Sleeping for 1 second...");
+    // thread::sleep(Duration::from_secs(1));
+    // println!("Woke up after 1 second!");
+
     let (server_ids, server_pubkeys) = read_pubkey_list("PKKeys.txt").expect("Failed to read server public keys from PKKeys.txt");
     let server_nodes = Arc::new(Mutex::new(
-        server_ids.into_iter().zip(server_pubkeys.into_iter()).collect::<HashMap<String, RsaPublicKey>>(),
+        server_ids.clone().into_iter().zip(server_pubkeys.into_iter()).collect::<HashMap<String, RsaPublicKey>>(),
     ));
-
     println!("Loaded server public keys from PKKeys.txt");
 
     let (server_ids_2, server_seckeys) = read_seckey_list("SKKeys.txt").expect("Failed to read server secret keys from SKKeys.txt");
+    let server_seckeys_map = server_ids.clone().into_iter().zip(server_seckeys.into_iter()) .collect::<HashMap<String, RsaPrivateKey>>();
     println!("Loaded server secret keys from SKKeys.txt");
 
     let (usernames, user_pubkeys) = read_pubkey_list("UserKeys.txt").expect("Failed to read user public keys from UserKeys.txt");
@@ -73,31 +92,12 @@ fn test_tulip_encrypt_output_format() {
 
     // First mixer
     let (mixer_id, mixer_pubkey) = mixers[0];
-    let mixer_seckey = server_seckeys[0].clone();
-
-    let pubkey_pem = mixer_pubkey.to_pkcs1_pem(LineEnding::LF).expect("failed to encode public key to PEM");
-    println!("Curent pubkey: {}", pubkey_pem);
-
-    let seckey_pem = mixer_seckey.to_pkcs1_pem(LineEnding::LF).expect("failed to encode private key to PEM");
-    println!("Current seckey: {}", *seckey_pem);
+    let mixer_seckey = server_seckeys_map.get(mixer_id).unwrap();
 
     println!("Trying to test the first mixer...");
 
     let result_decrypt = tulip_decrypt(&encrypted_tulip, mixer_id, &mixer_seckey);
 
     println!("Tulip Decrypt result: {:?}", result_decrypt);
-
-
-    // let mut rng = OsRng; 
-    // let test_msg = "Hello World";
-
-    // let dummy_privkey = RsaPrivateKey::new(&mut rng, 2048).expect("Failed to generate a private key");
-    // let dummy_pubkey = RsaPublicKey::from(&dummy_privkey);
-    // let u1 = dummy_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, test_msg.as_bytes()).expect("Failed to encrypt Hello World!");
-    // println!("Encrypted Hello World: {}", STANDARD.encode(&u1));
-    // let u2 = dummy_privkey.decrypt(Pkcs1v15Encrypt, &u1).expect("Failed to decrypt Hello World!"); 
-    // println!("Decrypted Hello World: {}", STANDARD.encode(&u2));
-
-
 
 }

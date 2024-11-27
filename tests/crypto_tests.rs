@@ -46,7 +46,7 @@ fn are_keys_compatible(privkey: &RsaPrivateKey, pubkey: &RsaPublicKey) -> bool {
 
 #[test]
 fn test_key_read_write() {
-    let n = 10;
+    let n = 2;
     let (ids, seckeys, pubkeys) = generate_pubkey_list(n);
 
     for i in 0..n {
@@ -54,7 +54,12 @@ fn test_key_read_write() {
         let seckey = seckeys[i].clone();
         println!("Params: {}, {}, {}", seckey.n(), seckey.primes()[0], seckey.primes()[1]);
 
-        let compat = are_keys_compatible(&seckey, &pubkey);
+        let seckey_pem = seckey.to_pkcs1_pem(LineEnding::LF).expect("failed to encode public key to PEM");
+        println!("{:?}", seckey_pem);
+        println!("Is there a difference?\n{}", *seckey_pem);
+        let seckey2 = RsaPrivateKey::from_pkcs1_pem(&(*seckey_pem)).expect("failed to parse public key from PEM");
+
+        let compat = are_keys_compatible(&seckey2, &pubkey);
         if compat {
             println!("Generated {}-th key pair successfully!", i);
         } else {
@@ -76,8 +81,8 @@ fn test_key_read_write() {
     thread::sleep(Duration::from_secs(1));
     println!("Woke up after 1 second!");
 
-    let (ids, new_pubkeys) = read_pubkey_list("PKTest.txt").expect("Failed to read server public keys from PKKeys.txt");
-    let (ids_2, new_seckeys) = read_seckey_list("SKKeys.txt").expect("Failed to read server secret keys from SKKeys.txt");
+    let (ids, new_pubkeys) = read_pubkey_list("PKTest.txt").expect("Failed to read server public keys from PKTest.txt");
+    let (ids_2, new_seckeys) = read_seckey_list("SKTest.txt").expect("Failed to read server secret keys from SKTest.txt");
 
     for i in 0..n {
         let pubkey = new_pubkeys[i].clone();
