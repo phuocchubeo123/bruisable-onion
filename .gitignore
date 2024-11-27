@@ -1,5 +1,2 @@
 /target
-PKKeys.txt
-SKKeys.txt
-network.txt
-UserKeys.txt
+*.txt

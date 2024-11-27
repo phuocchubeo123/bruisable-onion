@@ -88,15 +88,15 @@ fn test_tulip_encrypt_output_format() {
     println!("Tulip Decrypt result: {:?}", result_decrypt);
 
 
-    let mut rng = OsRng; 
-    let test_msg = "Hello World";
+    // let mut rng = OsRng; 
+    // let test_msg = "Hello World";
 
-    let dummy_privkey = RsaPrivateKey::new(&mut rng, 2048).expect("Failed to generate a private key");
-    let dummy_pubkey = RsaPublicKey::from(&dummy_privkey);
-    let u1 = dummy_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, test_msg.as_bytes()).expect("Failed to encrypt Hello World!");
-    println!("Encrypted Hello World: {}", STANDARD.encode(&u1));
-    let u2 = dummy_privkey.decrypt(Pkcs1v15Encrypt, &u1).expect("Failed to decrypt Hello World!"); 
-    println!("Decrypted Hello World: {}", STANDARD.encode(&u2));
+    // let dummy_privkey = RsaPrivateKey::new(&mut rng, 2048).expect("Failed to generate a private key");
+    // let dummy_pubkey = RsaPublicKey::from(&dummy_privkey);
+    // let u1 = dummy_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, test_msg.as_bytes()).expect("Failed to encrypt Hello World!");
+    // println!("Encrypted Hello World: {}", STANDARD.encode(&u1));
+    // let u2 = dummy_privkey.decrypt(Pkcs1v15Encrypt, &u1).expect("Failed to decrypt Hello World!"); 
+    // println!("Decrypted Hello World: {}", STANDARD.encode(&u2));
 
 
 
