@@ -82,8 +82,6 @@ fn test_tulip_encrypt_output_format() {
         &max_bruise,
     );
 
-    println!("Result: {:?}", result);
-
     assert!(result.is_ok(), "tulip_encrypt failed: {:?}", result);
     let encrypted_tulip = result.unwrap();
     assert!(encrypted_tulip.contains("|"), "Encrypted onion missing separators");
@@ -98,6 +96,6 @@ fn test_tulip_encrypt_output_format() {
 
     let result_decrypt = tulip_decrypt(&encrypted_tulip, mixer_id, &mixer_seckey);
 
-    println!("Tulip Decrypt result: {:?}", result_decrypt);
+    assert!(result_decrypt.is_ok(), "tulip_decrypt failed: {:?}", result_decrypt);
 
 }
