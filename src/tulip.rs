@@ -345,76 +345,81 @@ pub fn tulip_encrypt(
 
     println!("Done processing all gatekeepers!");
 
-    // Step 5: Forming the header and content for the last mixer
-    // index l1-1 in the mixers list
-    // hop index l1-1
+    // // Step 5: Forming the header and content for the last mixer
+    // // index l1-1 in the mixers list
+    // // hop index l1-1
 
-    // Create Bi and compute the tag first
-    let b_mixer_last = format!( // b_{i, 1} = (I_{i+1}, E_{i+1}})
-        "{}||{}||{}",
-        gatekeepers[0].0,
-        STANDARD.encode(&E1),
-        STANDARD.encode(&E2),
-    );
-    B.push(b_mixer_last.as_bytes().to_vec());
+    // // Create Bi and compute the tag first
+    // let b_mixer_last = format!( // b_{i, 1} = (I_{i+1}, E_{i+1}})
+    //     "{}||{}||{}",
+    //     gatekeepers[0].0,
+    //     STANDARD.encode(&E1),
+    //     STANDARD.encode(&E2),
+    // );
+    // B.push(b_mixer_last.as_bytes().to_vec());
 
-    // Create tag t
-    let mut hasher_mixer_last = Sha256::new();
-    for bij in B.iter().rev() {
-        hasher_mixer_last.update(bij);
-    }
-    hasher_mixer_last.update(c.clone());
-    let t_mixer_last = hasher_mixer_last.finalize(); // the tag
+    // // Create tag t
+    // let mut hasher_mixer_last = Sha256::new();
+    // for bij in B.iter().rev() {
+    //     hasher_mixer_last.update(bij);
+    // }
+    // hasher_mixer_last.update(c.clone());
+    // let t_mixer_last = hasher_mixer_last.finalize(); // the tag
 
-    println!("The tag for last mixer hop index {} is: {}", l1-1, STANDARD.encode(&t_mixer_last));
+    // println!("The tag for last mixer hop index {} is: {}", l1-1, STANDARD.encode(&t_mixer_last));
 
-    // Now encrypt the content and Bi
-    let aes_gcm_mixer_last = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&k[l1-1]));
-    let nonce_mixer_last = Nonce::from_slice(y[l1-1]);
-    c = aes_gcm_mixer_last.encrypt(nonce_mixer_last, c.as_slice())?;  // global c for content
+    // // Now encrypt the content and Bi
+    // let aes_gcm_mixer_last = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&k[l1-1]));
+    // let nonce_mixer_last = Nonce::from_slice(y[l1-1]);
+    // c = aes_gcm_mixer_last.encrypt(nonce_mixer_last, c.as_slice())?;  // global c for content
 
-    println!("Created content for the last mixer with hop index {}", l1-1);
+    // println!("Created content for the last mixer with hop index {}", l1-1);
 
-    for i in 0..B.len() { // wrap already existed Bi
-        B[i] = aes_gcm_mixer_last.encrypt(nonce_mixer_last, B[i].as_slice()).expect("Cannot encrypt new B");
-    }
+    // for i in 0..B.len() { // wrap already existed Bi
+    //     B[i] = aes_gcm_mixer_last.encrypt(nonce_mixer_last, B[i].as_slice()).expect("Cannot encrypt new B");
+    // }
 
-    // Create E
-    let e1_mixer_last = format!( 
-        "LastMixer|{}|{}|{}",
-        STANDARD.encode(&t_mixer_last),
-        l1-1,
-        STANDARD.encode(&k[l1-1]),
-    );
+    // // Create E
+    // let e1_mixer_last = format!( 
+    //     "LastMixer|{}|{}|{}",
+    //     STANDARD.encode(&t_mixer_last),
+    //     l1-1,
+    //     STANDARD.encode(&k[l1-1]),
+    // );
 
-    let e2_mixer_last = format!(
-        "{}|{}",
-        STANDARD.encode(y[l1-1]),
-        vA[l1],
-    );
+    // let e2_mixer_last = format!(
+    //     "{}|{}",
+    //     STANDARD.encode(y[l1-1]),
+    //     vA[l1],
+    // );
 
-    let (id_mixer_last, pubkey_mixer_last) = mixers[l1-1];
-    E1 = pubkey_mixer_last.encrypt(&mut rng, Pkcs1v15Encrypt, e1_mixer_last.as_bytes())?;
-    E2 = pubkey_mixer_last.encrypt(&mut rng, Pkcs1v15Encrypt, e2_mixer_last.as_bytes())?;
+    // let (id_mixer_last, pubkey_mixer_last) = mixers[l1-1];
+    // E1 = pubkey_mixer_last.encrypt(&mut rng, Pkcs1v15Encrypt, e1_mixer_last.as_bytes())?;
+    // E2 = pubkey_mixer_last.encrypt(&mut rng, Pkcs1v15Encrypt, e2_mixer_last.as_bytes())?;
 
-    H = format!(
-        "{},,{},,{}",
-        STANDARD.encode(&E1),
-        STANDARD.encode(&E2),
-        B.iter().map(|x| STANDARD.encode(&x)).rev().collect::<Vec<_>>().join(",,"),
-    );
+    // H = format!(
+    //     "{},,{},,{}",
+    //     STANDARD.encode(&E1),
+    //     STANDARD.encode(&E2),
+    //     B.iter().map(|x| STANDARD.encode(&x)).rev().collect::<Vec<_>>().join(",,"),
+    // );
 
-    println!("Created header for the last mixer with hop index {}", l1-1);
+    // println!("Created header for the last mixer with hop index {}", l1-1);
 
     // Step 6: Forming the outer mixers layers
     // indexed from l1-2 to 0 in the mixers list
     // indexed from l1-2 to 0 in the nonce list
     // indexed from l1-2 to 0 on the path
 
-    for current_id in (0..(l1-1)).rev() { // current_id from l1-1 to 0
+    for current_id in (0..(l1)).rev() { // current_id from l1-1 to 0
         let hop_index = current_id;
 
-        let next_mixer_id = mixers[current_id+1].0; // I_{i+1}
+        let mut next_node_id = "Node 0"; // dummy for next_node_id
+        if current_id < l1-1 {
+            next_node_id = mixers[current_id+1].0;
+        } else {
+            next_node_id = gatekeepers[0].0;
+        }
         let current_mixer_pubkey = mixers[hop_index].1; // pk(P_i)
         let current_layer_key = k[hop_index]; // k_i
         let current_layer_nonce = y[hop_index]; // y_i
@@ -422,7 +427,7 @@ pub fn tulip_encrypt(
         // Create b_{i, 1} and create the tag first, before encrypt every Bi
         let b_mixer = format!( // b_{i, 1} = (I_{i+1}, E_{i+1}})
             "{}||{}||{}",
-            next_mixer_id,
+            next_node_id,
             STANDARD.encode(&E1),
             STANDARD.encode(&E2),
         );
@@ -445,6 +450,7 @@ pub fn tulip_encrypt(
         // Encrypting all Bi
         for i in 0..B.len() {
             B[i] = aes_gcm_mixer.encrypt(nonce_mixer, B[i].as_slice()).expect("Cannot encrypt new B");
+            // println!("Prepared Bi: {}", STANDARD.encode(B[i].clone()));
         }
 
         // Encrypting content
@@ -478,6 +484,7 @@ pub fn tulip_encrypt(
         );
 
         println!("Created header for the mixer with hop index {}", hop_index);
+        // println!("The header is: {}", H);
     }
 
     let final_onion = format!(     // I will change the message format a bit. It will be: Header | Content | Sepal_nonce | Sepal_enc
@@ -513,6 +520,7 @@ pub fn tulip_decrypt(
     let H_string = H.to_string();
     let H_parts: Vec<&str> = H_string.split(",,").collect();
 
+    // println!("The received header is: {}", H);
     println!("The header has {} parts!", H_parts.len());
 
 
@@ -608,6 +616,8 @@ pub fn tulip_decrypt(
     let c_encrypted = parts[1]; // content
     let c = aes_gcm.decrypt(&layer_nonce, &*STANDARD.decode(c_encrypted)?)?;
 
+    println!("Decrypt content successfully!");
+
     // Process B and compute the hash
     let mut B = Vec::<_>::new();
     for i in 2..H_parts.len() {
@@ -615,6 +625,7 @@ pub fn tulip_decrypt(
     }
     // Decrypt all Bi
     for i in 0..B.len() {
+        // println!("Received Bi: {}", STANDARD.encode(B[i].clone()));
         B[i] = aes_gcm.decrypt(&layer_nonce, B[i].as_slice())?;
     }
 
@@ -632,6 +643,8 @@ pub fn tulip_decrypt(
 
     if t != ref_tag.to_vec() { // hopefully to_vec keeps the hash the same
         eprintln!("Some party sent the wrong content!");
+    } else {
+        println!("The content is verified");
     }
 
 
@@ -643,13 +656,15 @@ pub fn tulip_decrypt(
     let b1_parts = b1_string.split("||").collect::<Vec<_>>();
 
     let next_person = b1_parts[0].to_string();
-    let next_E = STANDARD.decode(b1_parts[1])?;
+    let next_E1 = STANDARD.decode(b1_parts[1])?;
+    let next_E2 = STANDARD.decode(b1_parts[2])?;
 
     // create header
     let next_H = format!(
-        "{}||{}",
-        STANDARD.encode(&next_E),
-        B.iter().map(|x| STANDARD.encode(x)).rev().collect::<Vec<_>>().join(","),
+        "{},,{},,{}",
+        STANDARD.encode(&next_E1),
+        STANDARD.encode(&next_E2),
+        B.iter().rev().take(B.len()-1).rev().map(|x| STANDARD.encode(x)).collect::<Vec<_>>().join(",,"),
     );
 
     // peels the sepal
@@ -658,11 +673,11 @@ pub fn tulip_decrypt(
 
     // Step 5: Now, we are ready to create the next message
     let next_message = format!(
-        "{}||{}||{}||{}",
+        "{}||{}||{}||{}||\n",
         next_H,
         STANDARD.encode(&c),
-        S_nonce.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),
-        S_enc.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(","),
+        S_nonce.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(",,"),
+        S_enc.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(",,"),
     );
 
     Ok((next_person, next_message))

@@ -83,19 +83,41 @@ fn test_tulip_encrypt_output_format() {
     );
 
     assert!(result.is_ok(), "tulip_encrypt failed: {:?}", result);
-    let encrypted_tulip = result.unwrap();
-    assert!(encrypted_tulip.contains("|"), "Encrypted onion missing separators");
+    let mut tulip = result.unwrap();
 
     println!("Done encrypting tulip!");
 
-    // First mixer
-    let (mixer_id, mixer_pubkey) = mixers[0];
-    let mixer_seckey = server_seckeys_map.get(mixer_id).unwrap();
+    for mixer_index in 0..3 {
+        let mixer_id = mixers[mixer_index].0;
+        let mixer_seckey = server_seckeys_map.get(mixer_id).unwrap();
 
-    println!("Trying to test the first mixer...");
+        println!("Trying to test mixer id {}", mixer_id);
 
-    let result_decrypt = tulip_decrypt(&encrypted_tulip, mixer_id, &mixer_seckey);
+        let result_decrypt = tulip_decrypt(&tulip, mixer_id, &mixer_seckey);
 
-    assert!(result_decrypt.is_ok(), "tulip_decrypt failed: {:?}", result_decrypt);
+        assert!(result_decrypt.is_ok(), "tulip_decrypt failed: {:?}", result_decrypt);
+
+        let (next_id, next_tulip) = result_decrypt.unwrap();
+        tulip = next_tulip;
+
+        println!("The next node in the path is {}", next_id);
+    }
+
+    for gatekeeper_index in 0..1 {
+        let gatekeeper_id = gatekeepers[gatekeeper_index].0;
+        let gatekeeper_seckey = server_seckeys_map.get(gatekeeper_id).unwrap();
+
+        println!("Trying to test gatekeeper id {}", gatekeeper_id);
+
+        let result_decrypt = tulip_decrypt(&tulip, gatekeeper_id, &gatekeeper_seckey);
+
+        assert!(result_decrypt.is_ok(), "tulip_decrypt failed: {:?}", result_decrypt);
+
+        let (next_id, next_tulip) = result_decrypt.unwrap();
+        tulip = next_tulip;
+
+        println!("The next node in the path is {}", next_id);
+
+    }
 
 }
