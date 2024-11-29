@@ -437,9 +437,9 @@ pub fn tulip_encrypt(
     Ok(final_onion)
 }
 
+
 pub fn tulip_decrypt(
     tulip: &str,
-    node_id: &str,
     node_seckey: &RsaPrivateKey,
     bruise: bool,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
@@ -684,7 +684,6 @@ pub fn tulip_decrypt(
 
 pub fn tulip_receive(
     tulip: &str,
-    node_id: &str,
     node_seckey: &RsaPrivateKey,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let tulip_string = tulip.to_string(); // just a placeholder to translate any &str into string
@@ -693,14 +692,18 @@ pub fn tulip_receive(
 
     println!("Number of tulip parts: {}", parts.len());
 
-    if parts.len() != 5 {
+    if parts.len() != 3 {
         return Err("Invalid onion layer format".into());
     }
 
     // Step 1: Process header
     let H = parts[0]; // Header
 
-    let e = node_seckey.decrypt(Pkcs1v15Encrypt, H.as_bytes())?;
+    let E = STANDARD.decode(H)?;
+    let e = node_seckey.decrypt(Pkcs1v15Encrypt, &E)?;
+
+    println!("Decrypted e!");
+
     let e_string = str::from_utf8(e.as_slice()).unwrap().to_string();
     let e_parts: Vec<&str> = e_string.split('|').collect();
 
@@ -749,4 +752,30 @@ pub fn tulip_receive(
     println!("Decrypted message: {}", message);
 
     Ok(message)
+}
+
+pub fn process_tulip(
+    tulip: &str,
+    first_node: &str,
+    node_secrets: &HashMap<String, RsaPrivateKey>,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    /*
+    This function is for the server, to loop through its nodes and process the tulip, then get the final recipient
+     */
+
+    let mut current_node = first_node.clone().to_string();
+    let mut current_tulip = tulip.clone().to_string();
+    let mut current_seckey = node_secrets.get(&current_node).ok_or("Node ID not found :(")?;
+    for hop_index in 0..5 {
+        let decrypt_result = tulip_decrypt(&current_tulip, current_seckey, false);
+        assert!(decrypt_result.is_ok(), "tulip_decrypt failed: {:?}", decrypt_result);
+        let (next_node, next_tulip) = decrypt_result.unwrap();
+        current_node = next_node;
+        current_tulip = next_tulip;
+        if hop_index < 4 {
+            current_seckey = node_secrets.get(&current_node).ok_or("Node ID not found :(")?;
+        }
+    }
+
+    Ok((current_node.to_string(), current_tulip.to_string()))
 }

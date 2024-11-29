@@ -1,7 +1,9 @@
 extern crate rsa;
 mod crypto;
+mod tulip;
 
 use crypto::{generate_pubkey_list, dump_pubkey_list, dump_seckey_list, reset_user_list, update_user_list};
+use tulip::{tulip_decrypt, process_tulip};
 use rsa::{RsaPublicKey, pkcs1::DecodeRsaPublicKey, RsaPrivateKey, Pkcs1v15Encrypt};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -12,64 +14,6 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use aes_gcm::aead::{Aead, AeadCore, KeyInit};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::io::{BufRead, BufReader};
-
-// eileen function to decrypt the onion received from client
-fn onion_decrypt(
-    onion: &str,
-    node_secrets: &HashMap<String, RsaPrivateKey>, // Maps node IDs to their private keys
-) -> Result<String, Box<dyn std::error::Error>> {
-    let mut current_layer = onion.to_string();
-    
-    // loop to decrypt each of the 3 layers, from outermost to innermost
-    for _ in 0..3 { // We know there are 3 nodes, so we decrypt 3 layers
-        // Split the current layer into three parts: node_id, encrypted symmetric key, and encrypted layer
-        let parts: Vec<&str> = current_layer.split('|').collect();
-        if parts.len() != 3 {
-            return Err("Invalid onion layer format".into());
-        }
-
-        let node_id = parts[0];          // Current node's ID
-        let enc_sym_key = parts[1];      // Encrypted symmetric key for the current layer
-        let encrypted_layer = parts[2];  // The encrypted layer content
-
-        // get the private key for the current node
-        let node_seckey = node_secrets.get(node_id).ok_or("Node ID not found")?;
-
-        // Decrypt the symmetric key for the current layer using the current node's private key
-        let enc_sym_key_bytes = STANDARD.decode(enc_sym_key)?;
-        let sym_key_bytes = node_seckey.decrypt(Pkcs1v15Encrypt, &enc_sym_key_bytes)?;
-
-        // decrypt the layer content using the symmetric key for the current layer
-        let aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&sym_key_bytes));
-        let nonce = Nonce::from_slice(&[0; 12]); // Use a constant nonce
-
-        let decrypted_layer = aes_gcm.decrypt(nonce, &*STANDARD.decode(encrypted_layer)?)?;
-
-        // Convert the decrypted layer back to a string for the next iteration
-        current_layer = String::from_utf8_lossy(&decrypted_layer).into_owned();
-
-        //println!("Current layer after decryption: {}", current_layer); //debugging
-    }
-
-    // ater decrypting all layers, we expect the final layer to contain:
-    // 1. The recipient ID
-    // 2. The encrypted symmetric key for the recipient
-    // 3. The encrypted message
-
-    let parts: Vec<&str> = current_layer.split('|').collect();
-    if parts.len() != 3 {
-        return Err("Final layer format invalid".into());
-    }
-
-    let recipient_id = parts[0];   // Recipient's ID
-    let enc_sym_key = parts[1];    // Encrypted symmetric key for the recipient
-    let encrypted_message = parts[2]; // The encrypted message
-
-    // format the final result into a single string compatible with client's parsing
-    let result = format!("{}|{}|{}", recipient_id, enc_sym_key, encrypted_message);
-
-    Ok(result) // Return the formatted string to the client
-}
 
 // receive and forward messages from the client
 fn handle_client(
@@ -162,46 +106,43 @@ fn handle_client(
                 println!("Received message: {:?}", received_message);
 
                 // split the received message format: Recipient_ID|Enc_R_PK(sym_K4)|Enc_symK4(message)
-                let parts: Vec<&str> = received_message.split('|').collect();
+                let parts: Vec<&str> = received_message.split("--").collect();
                 println!("Parsed parts: {:?}", parts);
 
                 // ensure the message format has three parts (Recipient ID, Encrypted Public Key, Encrypted Message)
-                if parts.len() != 3 {
+                if parts.len() != 2 {
                     eprintln!("Invalid message format");
                     continue;
                 }
 
-                // decrypt the message
-                let decrypted_message = match onion_decrypt(&received_message, &seckeys.lock().unwrap()) {
-                    Ok(decrypted) => decrypted,
-                    Err(e) => {
-                        eprintln!("Decryption failed: {}", e);
-                        continue;
-                    }
-                };
+                let first_node= parts[0];
+                let tulip = parts[1];
 
-                // further process the decrypted message
-                let final_decrypted_layer: Vec<&str> = decrypted_message.split('|').collect();
-                if final_decrypted_layer.len() != 3 {
-                    eprintln!("Decrypted message format invalid");
-                    continue;
-                }
+                let tulip_result = process_tulip(tulip, first_node, &seckeys.lock().unwrap());
+                assert!(tulip_result.is_ok(), "processing tulip failed: {:?}", tulip_result);
 
-                // Final recipient ID
-                let final_recipient_id = final_decrypted_layer[0];
-                let enc_sym_key4 = final_decrypted_layer[1];
-                let encrypted_message = final_decrypted_layer[2];
+                let (recipient, current_tulip) = tulip_result.unwrap();
+
+            //     // further process the decrypted message
+            //     let final_decrypted_layer: Vec<&str> = decrypted_message.split('|').collect();
+            //     if final_decrypted_layer.len() != 3 {
+            //         eprintln!("Decrypted message format invalid");
+            //         continue;
+            //     }
+
+            //     // Final recipient ID
+            //     let final_recipient_id = final_decrypted_layer[0];
+            //     let enc_sym_key4 = final_decrypted_layer[1];
+            //     let encrypted_message = final_decrypted_layer[2];
 
                 // find the recipient's stream and send the entire decrypted message
                 let clients = clients.lock().unwrap();
-                if let Some(mut recipient_stream) = clients.get(final_recipient_id) {
-                    let message_to_send = format!("{}|{}|{}", final_recipient_id, enc_sym_key4, encrypted_message);
-                    
-                    if let Err(e) = recipient_stream.write_all(message_to_send.as_bytes()) {
-                        eprintln!("Failed to send message to recipient '{}': {}", final_recipient_id, e);
+                if let Some(mut recipient_stream) = clients.get(&recipient) {
+                    if let Err(e) = recipient_stream.write_all(current_tulip.as_bytes()) {
+                        eprintln!("Failed to send message to recipient '{}': {}", recipient, e);
                     }
                 } else {
-                    eprintln!("Recipient '{}' not found!", final_recipient_id);
+                    eprintln!("Recipient '{}' not found!", recipient);
                 }
             }
             Err(e) => {

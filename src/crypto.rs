@@ -135,7 +135,7 @@ pub fn read_seckey_list(filename: &str) -> std::io::Result<(Vec<String>, Vec<Rsa
                 buffer.clear();
             }
 
-            println!("Current PEM: {}", pem);
+            // println!("Current PEM: {}", pem);
             let seckey = RsaPrivateKey::from_pkcs1_pem(&pem).expect("failed to parse secret key from PEM");
             seckeys.push(seckey);
         }
