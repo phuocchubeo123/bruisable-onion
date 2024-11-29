@@ -2,7 +2,7 @@ extern crate rsa;
 mod crypto;
 mod tulip;
 
-use crypto::{generate_pubkey_list, dump_pubkey_list, dump_seckey_list, reset_user_list, update_user_list};
+use crypto::{read_pubkey_list, read_seckey_list, reset_user_list, update_user_list};
 use tulip::{tulip_decrypt, process_tulip};
 use rsa::{RsaPublicKey, pkcs1::DecodeRsaPublicKey, RsaPrivateKey, Pkcs1v15Encrypt};
 use std::net::{TcpListener, TcpStream};
@@ -123,18 +123,6 @@ fn handle_client(
 
                 let (recipient, current_tulip) = tulip_result.unwrap();
 
-            //     // further process the decrypted message
-            //     let final_decrypted_layer: Vec<&str> = decrypted_message.split('|').collect();
-            //     if final_decrypted_layer.len() != 3 {
-            //         eprintln!("Decrypted message format invalid");
-            //         continue;
-            //     }
-
-            //     // Final recipient ID
-            //     let final_recipient_id = final_decrypted_layer[0];
-            //     let enc_sym_key4 = final_decrypted_layer[1];
-            //     let encrypted_message = final_decrypted_layer[2];
-
                 // find the recipient's stream and send the entire decrypted message
                 let clients = clients.lock().unwrap();
                 if let Some(mut recipient_stream) = clients.get(&recipient) {
@@ -165,40 +153,25 @@ fn handle_client(
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
-    let clients = Arc::new(Mutex::new(HashMap::new()));
-    let existing_users = Arc::new(Mutex::new(HashMap::new()));
-    let seckeys: Arc<Mutex<HashMap<String, RsaPrivateKey>>> = Arc::new(Mutex::new(HashMap::new()));
+    let clients_mutex = Arc::new(Mutex::new(HashMap::new()));
+    let pubkeys_mutex = Arc::new(Mutex::new(HashMap::new()));
+    let seckeys_mutex = Arc::new(Mutex::new(HashMap::new()));
 
-
-    // Generate keys and save them
-    println!("Enter the number of intermediate clients: ");
-    let mut input_string = String::new();
-    io::stdin().read_line(&mut input_string).unwrap();
-    let n: usize = input_string.trim().parse().expect("Expected a positive integer!");
-    let (ids, seckeys_vec, pubkeys) = generate_pubkey_list(n);
-
-    match dump_pubkey_list(&ids, &pubkeys, "PKKeys.txt") {
-        Ok(_) => println!("Successfully written pseudo keys to PKKeys.txt!"),
-        Err(e) => eprintln!("Failed to write to PKKeys.txt: {}", e),
-    };
-
-    match dump_seckey_list(&ids, &seckeys_vec, "SKKeys.txt") {
-        Ok(_) => println!("Successfully written secret keys of intermediate nodes to SKKeys.txt!"),
-        Err(e) => eprintln!("Failed to write to SKKeys.txt: {}", e),
-    }
+    let (ids, pubkeys) = read_pubkey_list("PKKeys.txt").expect("Failed to read server public keys from PKTest.txt");
+    let (ids_2, seckeys) = read_seckey_list("SKKeys.txt").expect("Failed to read server secret keys from SKTest.txt");
 
     // Load server public keys and private keys into the HashMaps
     {
-        let mut users = existing_users.lock().unwrap();
-        let mut sec_keys = seckeys.lock().unwrap();
+        let mut pubkeys_map = pubkeys_mutex.lock().unwrap();
+        let mut seckeys_map = seckeys_mutex.lock().unwrap();
 
         // Populate the HashMaps with id -> public key and id -> private key
         for (id, pubkey) in ids.iter().zip(pubkeys.iter()) {
-            users.insert(id.clone(), pubkey.clone());
+            pubkeys_map.insert(id.clone(), pubkey.clone());
         }
 
-        for (id, privkey) in ids.iter().zip(seckeys_vec.iter()) {
-            sec_keys.insert(id.clone(), privkey.clone());
+        for (id, seckey) in ids.iter().zip(seckeys.iter()) {
+            seckeys_map.insert(id.clone(), seckey.clone());
         }
 
         println!("Loaded server public keys and private keys.");
@@ -215,12 +188,12 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let clients_clone = Arc::clone(&clients);
-                let users_clone = Arc::clone(&existing_users);
-                let seckeys_clone: Arc<Mutex<HashMap<String, RsaPrivateKey>>> = Arc::clone(&seckeys);
+                let clients_clone = Arc::clone(&clients_mutex);
+                let pubkeys_clone = Arc::clone(&pubkeys_mutex);
+                let seckeys_clone: Arc<Mutex<HashMap<String, RsaPrivateKey>>> = Arc::clone(&seckeys_mutex);
 
                 thread::spawn(move || {
-                    handle_client(stream, clients_clone, users_clone, seckeys_clone);
+                    handle_client(stream, clients_clone, pubkeys_clone, seckeys_clone);
                 });
             }
             Err(e) => {

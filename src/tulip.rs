@@ -40,7 +40,7 @@ pub fn tulip_encrypt(
     let mut S_nonce = Vec::<_>::new();
     let mut S_enc = Vec::<_>::new();
 
-    for master_key_block in 0..max_bruise.clone() {
+    for _master_key_block in 0..max_bruise.clone() {
         let mut enc_master_key = master_key.as_slice().to_vec(); // stupid workaround to copy the master key
         let nonce = Aes256Gcm::generate_nonce(&mut rng); // Same nonce for every layer
         for layer_key in k.iter().take(l-1).rev() { // iterate from near-last to first
@@ -58,7 +58,7 @@ pub fn tulip_encrypt(
     }
 
     // I wonder if it is still okay to encrypt using l-1 keys instead of l1+1 keys
-    for null_block in 0..(l1 - max_bruise + 1) {
+    for _null_block in 0..(l1 - max_bruise + 1) {
         let mut enc_null = vec![0u8; master_key.as_slice().to_vec().len()]; // more stupid workaround to have null string with the same length as master key
         let nonce = Aes256Gcm::generate_nonce(&mut rng); // Currently, I use the same nonce for every layer, I hope that it is safe
         for layer_key in k.iter().take(l-1).rev() { // iterate from first gatekeeper to first

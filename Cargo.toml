@@ -11,6 +11,10 @@ path = "src/server.rs"
 name = "client"
 path = "src/client.rs"
 
+[[bin]]
+name = "server_key_gen"
+path = "src/server_key_gen.rs"
+
 [dependencies]
 rsa = { version = "0.9.6", features = ["sha2"] }
 rand = "0.8.5"
