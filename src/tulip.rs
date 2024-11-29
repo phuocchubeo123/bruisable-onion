@@ -681,3 +681,72 @@ pub fn tulip_decrypt(
 
     Ok((next_person, next_message))
 }
+
+pub fn tulip_receive(
+    tulip: &str,
+    node_id: &str,
+    node_seckey: &RsaPrivateKey,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let tulip_string = tulip.to_string(); // just a placeholder to translate any &str into string
+
+    let parts: Vec<&str> = tulip_string.split("||").collect();
+
+    println!("Number of tulip parts: {}", parts.len());
+
+    if parts.len() != 5 {
+        return Err("Invalid onion layer format".into());
+    }
+
+    // Step 1: Process header
+    let H = parts[0]; // Header
+
+    let e = node_seckey.decrypt(Pkcs1v15Encrypt, H.as_bytes())?;
+    let e_string = str::from_utf8(e.as_slice()).unwrap().to_string();
+    let e_parts: Vec<&str> = e_string.split('|').collect();
+
+    println!("Received e: {}", e_string);
+
+    // Get role
+    let role = e_parts[0].to_string(); // role
+    if role == "Recipient" {
+        eprintln!("Something's wrong! Cannot let the server know the message for recipient!");
+    }
+
+    println!("Received the role: {}", role);
+
+    // Get hop_index
+    let hop_index_string = e_parts[2].to_string();
+    let hop_index = hop_index_string.parse::<usize>().unwrap(); // parse hop_index as usize
+
+    println!("Received the hop index: {}", hop_index);
+
+    // Get layer key and nonce
+    let layer_key = STANDARD.decode(e_parts[3])?;
+    let aes_gcm = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&layer_key));
+    let layer_nonce = Nonce::from_slice(&[0; 12]); // Zero-nonce for the recipient
+
+    let c_encrypted = parts[1]; // content
+    let c = aes_gcm.decrypt(&layer_nonce, &*STANDARD.decode(c_encrypted)?)?;
+
+    println!("Decrypt content successfully!");
+
+    let mut content_hasher = Sha256::new();
+    content_hasher.update(c.clone());
+    let ref_tag = content_hasher.finalize(); // compute the hash of content and blocks
+
+    let t = STANDARD.decode(e_parts[1])?; // read the tag
+
+    println!("The reference tag is: {}", STANDARD.encode(&ref_tag));
+    println!("Received tag: {}", STANDARD.encode(&t));
+
+    if t != ref_tag.to_vec() { // hopefully to_vec keeps the hash the same
+        eprintln!("Some party sent the wrong content!");
+    } else {
+        println!("The content is verified");
+    }
+
+    let message = String::from_utf8_lossy(&c).to_string();
+    println!("Decrypted message: {}", message);
+
+    Ok(message)
+}

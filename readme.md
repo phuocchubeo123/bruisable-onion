@@ -149,3 +149,8 @@ Meet with Kinan Check-In Next Steps:
     1. test on end to end delivery (between Alice to Bob times) and compare between basic onion scheme and bruisable onion scheme
     2. mini-benchmark tests (like on just how long it takes Alice to encrypt or how long it takes intermediary nodes to decrypt)
     3. Graphs to show how message length affects timing, and how number of intermediary nodes affects timing.
+
+Update 28 Nov 2024:
+1. Debugged for every intermediate node (DONE)
+2. Write code for receiver (NOT DONE)
+3. Make things modular (NOT DONE)
