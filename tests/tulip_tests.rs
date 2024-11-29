@@ -93,7 +93,11 @@ fn test_tulip_encrypt_output_format() {
 
         println!("Trying to test mixer id {}", mixer_id);
 
-        let result_decrypt = tulip_decrypt(&tulip, mixer_id, &mixer_seckey);
+        let mut bruise = false;
+        if mixer_index == 0 {
+            bruise = true;
+        }
+        let result_decrypt = tulip_decrypt(&tulip, mixer_id, &mixer_seckey, bruise);
 
         assert!(result_decrypt.is_ok(), "tulip_decrypt failed: {:?}", result_decrypt);
 
@@ -109,7 +113,7 @@ fn test_tulip_encrypt_output_format() {
 
         println!("Trying to test gatekeeper id {}", gatekeeper_id);
 
-        let result_decrypt = tulip_decrypt(&tulip, gatekeeper_id, &gatekeeper_seckey);
+        let result_decrypt = tulip_decrypt(&tulip, gatekeeper_id, &gatekeeper_seckey, false);
 
         assert!(result_decrypt.is_ok(), "tulip_decrypt failed: {:?}", result_decrypt);
 
@@ -117,7 +121,20 @@ fn test_tulip_encrypt_output_format() {
         tulip = next_tulip;
 
         println!("The next node in the path is {}", next_id);
-
     }
+
+    let last_gatekeeper = gatekeepers[gatekeepers.len()-1].0;
+    let last_gatekeeper_seckey = server_seckeys_map.get(last_gatekeeper).unwrap();
+
+    println!("Trying to test gatekeeper id {}", last_gatekeeper);
+
+    let result_decrypt = tulip_decrypt(&tulip, last_gatekeeper, &last_gatekeeper_seckey, false);
+
+    assert!(result_decrypt.is_ok(), "tulip_decrypt failed: {:?}", result_decrypt);
+
+    let (recipient, next_tulip) = result_decrypt.unwrap();
+    tulip = next_tulip;
+
+    println!("The next node in the path is {}", recipient);
 
 }
