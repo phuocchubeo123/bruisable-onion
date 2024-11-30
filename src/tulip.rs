@@ -176,18 +176,13 @@ pub fn tulip_encrypt(
     // Step 2: Forming the header and content for the last onion layer a.k.a the receiver
     // indexed l-1 on the path
 
-    // Create content 
-    // Global c is for the content
-
-    let aes_gcm_last = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&k[l-1]));
-    let nonce_last = Nonce::from_slice(&[0; 12]); // Zero-nonce for the recipient
-    let mut c = aes_gcm_last.encrypt(nonce_last, message.as_bytes())?;   // universal variable for content
-
-    println!("Created content for the last layer.");
+    // Create the unencrypted message 
+    let mut c = message.as_bytes().to_vec();
 
     // Create header
     // Global E is for the encrypted metadata
     // Global H is for header
+    // We compute the tag first, which is just the hash of the unencrypted message
 
     let mut hasher_last = Sha256::new();
     hasher_last.update(c.clone());
@@ -203,6 +198,16 @@ pub fn tulip_encrypt(
         "{}",
         STANDARD.encode(&E) //lower case e decrypted/plaintext, E encrypted/ciphertext
     ); 
+
+    // Create content 
+    // Global c is for the content
+
+    let aes_gcm_last = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&k[l-1]));
+    let nonce_last = Nonce::from_slice(&[0; 12]); // Zero-nonce for the recipient
+    c = aes_gcm_last.encrypt(nonce_last, c.as_slice())?;   // universal variable for content
+
+    println!("Created content for the last layer.");
+
 
     println!("Created header for the last layer.");
 
@@ -711,7 +716,7 @@ pub fn tulip_receive(
 
     // Get role
     let role = e_parts[0].to_string(); // role
-    if role == "Recipient" {
+    if role != "Recipient" {
         eprintln!("Something's wrong! Cannot let the server know the message for recipient!");
     }
 
