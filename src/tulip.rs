@@ -106,7 +106,7 @@ pub fn tulip_encrypt(
             Ti.push(dec_null);
         }
 
-        // let Ti: Vec<_> = (0..(l1+1))
+        // let Ti: Vec<_> = (0..(l1+1))d
         //     .map(|i| aes_gcm.decrypt(&S_nonce[i], T[layer_id-1][i].as_slice()).expect("Cannot decrypt the sepal layer"))
         //     .collect();
         T.push(Ti);
