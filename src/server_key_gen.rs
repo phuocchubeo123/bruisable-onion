@@ -1,7 +1,10 @@
 mod crypto;
 mod intermediary_node;
+mod tulip;
+mod shared;
 use std::io::{self, Read, Write};
 use crypto::{generate_pubkey_list, dump_pubkey_list, dump_seckey_list};
+
 
 fn main() {
     // Generate keys and save them

@@ -1,17 +1,21 @@
-extern crate rsa;
-extern crate sha2;
+use std::{cmp::max, collections::HashMap};
 
-use std::{cmp::max, str};
-use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey, LineEnding};
-use rsa::{RsaPublicKey, RsaPrivateKey, Pkcs1v15Encrypt}; 
-use std::collections::HashMap;
+use crate::shared::IntermediaryNode; // Import from shared.rs
+
+// Import IntermediaryNode
+use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rand::{rngs::OsRng, RngCore};
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit},
-    Aes256Gcm, Key, Nonce
-}; 
+    Aes256Gcm, Key, Nonce,
+};
+use std::str;
+
 use sha2::{Sha256, Digest};
+
+
+
 
 // phuoc: tulip encryption
 // COMPILED BUT NOT TESTED
@@ -693,7 +697,7 @@ pub fn tulip_receive(
 ) -> Result<String, Box<dyn std::error::Error>> {
     let tulip_string = tulip.to_string(); // just a placeholder to translate any &str into string
 
-    let parts: Vec<&str> = tulip_string.split("||").collect();
+    let parts: Vec<&str> = tulip_string.split("||").collect();    
 
     println!("Number of tulip parts: {}", parts.len());
 
@@ -762,23 +766,35 @@ pub fn tulip_receive(
 pub fn process_tulip(
     tulip: &str,
     first_node: &str,
-    node_secrets: &HashMap<String, RsaPrivateKey>,
+    node_registry: &HashMap<String, IntermediaryNode>,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
     /*
-    This function is for the server, to loop through its nodes and process the tulip, then get the final recipient
-     */
+    This function is for the server, to loop through its nodes and process the tulip, 
+    then get the final recipient. It uses the node_registry to access nodes' secrets.
+    */
 
-    let mut current_node = first_node.clone().to_string();
-    let mut current_tulip = tulip.clone().to_string();
-    let mut current_seckey = node_secrets.get(&current_node).ok_or("Node ID not found :(")?;
+    let mut current_node = first_node.to_string();
+    let mut current_tulip = tulip.to_string();
+
+    // Access the current node and its secret key from the registry
+    let current_node_obj = node_registry.get(&current_node)
+        .ok_or("Node ID not found in registry")?;
+    
+    let mut current_seckey = &current_node_obj.private_key;
+    
     for hop_index in 0..5 {
         let decrypt_result = tulip_decrypt(&current_tulip, current_seckey, false);
         assert!(decrypt_result.is_ok(), "tulip_decrypt failed: {:?}", decrypt_result);
         let (next_node, next_tulip) = decrypt_result.unwrap();
+        
         current_node = next_node;
         current_tulip = next_tulip;
+
         if hop_index < 4 {
-            current_seckey = node_secrets.get(&current_node).ok_or("Node ID not found :(")?;
+            // Get the secret key for the next node from the registry
+            let next_node_obj = node_registry.get(&current_node)
+                .ok_or("Next node ID not found in registry")?;
+            current_seckey = &next_node_obj.private_key;
         }
     }
 

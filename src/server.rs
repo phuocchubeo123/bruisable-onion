@@ -1,6 +1,7 @@
 extern crate rsa;
 mod crypto;
 mod tulip;
+mod shared;
 
 use crypto::{read_pubkey_list, read_seckey_list, reset_user_list, update_user_list};
 use tulip::{tulip_decrypt, process_tulip};
@@ -15,31 +16,16 @@ use aes_gcm::aead::{Aead, AeadCore, KeyInit};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::io::{BufRead, BufReader};
 mod intermediary_node;
-use intermediary_node::{register_node, IntermediaryNode};
+use crate::shared::IntermediaryNode; // Import from shared.rs
 
-// Define the NodeRegistry struct to manage nodes.
-pub struct Server {
-    nodes: HashMap<String, IntermediaryNode>,
-}
 
-impl Server {
-    pub fn new() -> Self {
-        Server {
-            nodes: HashMap::new(),
-        }
-    }
-
-    pub fn add_node(&mut self, id: &str, public_key: RsaPublicKey, private_key: RsaPrivateKey) {
-        register_node(&mut self.nodes, id, public_key, private_key);
-    }
-}
 
 // receive and forward messages from the client
 fn handle_client(
     mut stream: TcpStream,
     clients: Arc<Mutex<HashMap<String, TcpStream>>>,
     existing_users: Arc<Mutex<HashMap<String, RsaPublicKey>>>,
-    seckeys: Arc<Mutex<HashMap<String, RsaPrivateKey>>>, // Server's private keys for decryption
+    node_registry: Arc<Mutex<HashMap<String, IntermediaryNode>>>, // Directly using HashMap here
 ) {
     let mut buffer = [0; 512];
 
@@ -134,10 +120,11 @@ fn handle_client(
                     continue;
                 }
 
-                let first_node= parts[0];
+                let first_node = parts[0];
                 let tulip = parts[1];
 
-                let tulip_result = process_tulip(tulip, first_node, &seckeys.lock().unwrap());
+                let registry = node_registry.lock().unwrap();
+                let tulip_result = process_tulip(tulip, first_node, &registry);
                 assert!(tulip_result.is_ok(), "processing tulip failed: {:?}", tulip_result);
 
                 let (recipient, current_tulip) = tulip_result.unwrap();
@@ -176,13 +163,11 @@ fn main() {
     let pubkeys_mutex = Arc::new(Mutex::new(HashMap::new()));
     let seckeys_mutex = Arc::new(Mutex::new(HashMap::new()));
 
-    // Create the node registry to manage intermediary nodes
-    let node_registry = Arc::new(Mutex::new(Server::new()));
-    
-    
+    // Create the node registry to manage intermediary nodes as a HashMap
+    let node_registry = Arc::new(Mutex::new(HashMap::<String, IntermediaryNode>::new()));
+
     let (ids, pubkeys) = read_pubkey_list("PKKeys.txt").expect("Failed to read server public keys from PKTest.txt");
     let (ids_2, seckeys) = read_seckey_list("SKKeys.txt").expect("Failed to read server secret keys from SKTest.txt");
-
 
     // Ensure the ids, pubkeys, and seckeys match in length
     assert_eq!(ids.len(), pubkeys.len(), "Mismatch between ids and public keys");
@@ -194,47 +179,38 @@ fn main() {
         let mut seckeys_map = seckeys_mutex.lock().unwrap();
         let mut registry = node_registry.lock().unwrap();
 
-
         // Combine ids, pubkeys, and seckeys and iterate over them
         for (id, pubkey, seckey) in ids.iter().zip(pubkeys.iter()).zip(seckeys.iter()).map(|((id, pubkey), seckey)| (id, pubkey, seckey)) {
             // Insert public and secret keys into the respective HashMaps
             pubkeys_map.insert(id.clone(), pubkey.clone());
             seckeys_map.insert(id.clone(), seckey.clone());
 
-            // Register nodes with the server
-            registry.add_node(id, pubkey.clone(), seckey.clone());
+            // Register nodes with the registry
+            registry.insert(id.clone(), IntermediaryNode { public_key: pubkey.clone(), private_key: seckey.clone(), id: id.clone() });
         }
 
         // Debug print to check if nodes are properly registered
         println!("Node registry after population:");
-        for (id, node) in &registry.nodes {
+        for (id, node) in &*registry {  // Dereference `registry` here
             println!("ID: {}, Public Key: {:?}", id, node.public_key);
         }
         println!("Loaded server public keys and private keys and node registry.");
     }
 
-    // Reset the user list
-    match reset_user_list("UserKeys.txt") {
-        Ok(_) => println!("Reset the list in UserKeys.txt!"),
-        Err(e) => eprintln!("Failed to reset UserKeys.txt: {}", e),
-    };
-
-    println!("Server listening on port 7878");
-
+    // Now start the TCP listener
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let clients_clone = Arc::clone(&clients_mutex);
-                let pubkeys_clone = Arc::clone(&pubkeys_mutex);
-                let seckeys_clone: Arc<Mutex<HashMap<String, RsaPrivateKey>>> = Arc::clone(&seckeys_mutex);
+                let clients_mutex = clients_mutex.clone();
+                let pubkeys_mutex = pubkeys_mutex.clone();
+                let node_registry = node_registry.clone();
 
+                // Handle the new client in a separate thread
                 thread::spawn(move || {
-                    handle_client(stream, clients_clone, pubkeys_clone, seckeys_clone);
+                    handle_client(stream, clients_mutex, pubkeys_mutex, node_registry);
                 });
             }
-            Err(e) => {
-                println!("Error: {}", e);
-            }
+            Err(e) => eprintln!("Failed to accept incoming connection: {}", e),
         }
     }
 }
