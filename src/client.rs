@@ -112,7 +112,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Enter your message:");
                 let mut message = String::new();
                 io::stdin().read_line(&mut message).unwrap();
-                let message = message.trim().to_string();
+                let username = username.trim().to_string();
+                let no_username_message = message.trim().to_string();
+                let message = format!("(from {}) {}", username, no_username_message);
+
+
 
 
                 // encrypt the initial message with a symmetric key for the recipient
