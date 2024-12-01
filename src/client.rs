@@ -19,6 +19,7 @@ use aes_gcm::{
 }; 
 use sha2::{Sha256, Digest};
 use tulip::{tulip_encrypt, tulip_receive};
+mod intermediary_node;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     match TcpStream::connect("127.0.0.1:7878") {

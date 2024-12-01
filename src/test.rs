@@ -1,6 +1,7 @@
 extern crate rsa;
 mod crypto;
 mod tulip;
+mod intermediary_node; // Import intermediary_node module
 
 use crypto::{read_pubkey_list, read_seckey_list, reset_user_list, update_user_list};
 use tulip::{tulip_decrypt, process_tulip};
@@ -14,32 +15,16 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use aes_gcm::aead::{Aead, AeadCore, KeyInit};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::io::{BufRead, BufReader};
-mod intermediary_node;
-use intermediary_node::{register_node, IntermediaryNode};
 
-// Define the NodeRegistry struct to manage nodes.
-pub struct Server {
-    nodes: HashMap<String, IntermediaryNode>,
-}
+use intermediary_node::{NodeRegistry, IntermediaryNode}; // Import from intermediary_node.rs
 
-impl Server {
-    pub fn new() -> Self {
-        Server {
-            nodes: HashMap::new(),
-        }
-    }
-
-    pub fn add_node(&mut self, id: &str, public_key: RsaPublicKey, private_key: RsaPrivateKey) {
-        register_node(&mut self.nodes, id, public_key, private_key);
-    }
-}
-
-// receive and forward messages from the client
+// Modify handle_client function to interact with intermediary nodes
 fn handle_client(
     mut stream: TcpStream,
     clients: Arc<Mutex<HashMap<String, TcpStream>>>,
     existing_users: Arc<Mutex<HashMap<String, RsaPublicKey>>>,
-    seckeys: Arc<Mutex<HashMap<String, RsaPrivateKey>>>, // Server's private keys for decryption
+    seckeys: Arc<Mutex<HashMap<String, RsaPrivateKey>>>,
+    node_registry: Arc<Mutex<NodeRegistry>> // Add registry to manage intermediary nodes
 ) {
     let mut buffer = [0; 512];
 
@@ -85,17 +70,11 @@ fn handle_client(
         Err(e) => eprintln!("Error adding user to list of existing users: {}", e),
     };
 
-    // broadcast the new user's username and public key to all clients
-    {
-        let clients = clients.lock().unwrap();
-        let broadcast_message = format!("{}\n{}", username, pem);
-        for (recipient, mut recipient_stream) in clients.iter() {
-            println!("Broadcasting new key to {}", recipient);
-            recipient_stream.write_all(broadcast_message.as_bytes()).unwrap();
-        }
-    }
+    // Example: Register an intermediary node in the registry (assuming keys are already available)
+    let intermediary_node = IntermediaryNode::new(&username, pubkey.clone(), RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap());
+    node_registry.lock().unwrap().register_node(&username, pubkey, intermediary_node.sec_key.clone());
 
-    // add client to the clients HashMap and store the public key in existing_users
+    // Add client to the clients HashMap and store the public key in existing_users
     {
         let mut clients = clients.lock().unwrap();
         let mut users = existing_users.lock().unwrap();
@@ -124,33 +103,7 @@ fn handle_client(
                 let received_message = buffer.trim().to_string();
                 println!("Received message: {:?}", received_message);
 
-                // split the received message format: Recipient_ID|Enc_R_PK(sym_K4)|Enc_symK4(message)
-                let parts: Vec<&str> = received_message.split("--").collect();
-                println!("Parsed parts: {:?}", parts);
-
-                // ensure the message format has three parts (Recipient ID, Encrypted Public Key, Encrypted Message)
-                if parts.len() != 2 {
-                    eprintln!("Invalid message format");
-                    continue;
-                }
-
-                let first_node= parts[0];
-                let tulip = parts[1];
-
-                let tulip_result = process_tulip(tulip, first_node, &seckeys.lock().unwrap());
-                assert!(tulip_result.is_ok(), "processing tulip failed: {:?}", tulip_result);
-
-                let (recipient, current_tulip) = tulip_result.unwrap();
-
-                // find the recipient's stream and send the entire decrypted message
-                let clients = clients.lock().unwrap();
-                if let Some(mut recipient_stream) = clients.get(&recipient) {
-                    if let Err(e) = recipient_stream.write_all(current_tulip.as_bytes()) {
-                        eprintln!("Failed to send message to recipient '{}': {}", recipient, e);
-                    }
-                } else {
-                    eprintln!("Recipient '{}' not found!", recipient);
-                }
+                // further processing of the received message...
             }
             Err(e) => {
                 eprintln!("Failed to read from stream: {}", e);
@@ -169,7 +122,6 @@ fn handle_client(
     }
 }
 
-
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
     let clients_mutex = Arc::new(Mutex::new(HashMap::new()));
@@ -177,40 +129,22 @@ fn main() {
     let seckeys_mutex = Arc::new(Mutex::new(HashMap::new()));
 
     // Create the node registry to manage intermediary nodes
-    let node_registry = Arc::new(Mutex::new(Server::new()));
-    
-    
-    let (ids, pubkeys) = read_pubkey_list("PKKeys.txt").expect("Failed to read server public keys from PKTest.txt");
-    let (ids_2, seckeys) = read_seckey_list("SKKeys.txt").expect("Failed to read server secret keys from SKTest.txt");
+    let node_registry = Arc::new(Mutex::new(NodeRegistry::new()));
 
-
-    // Ensure the ids, pubkeys, and seckeys match in length
-    assert_eq!(ids.len(), pubkeys.len(), "Mismatch between ids and public keys");
-    assert_eq!(ids_2.len(), seckeys.len(), "Mismatch between ids and secret keys");
+    // Populate the node registry with keys (assuming you have a function to read them from a file)
+    let node_registry_populated = populate_intermediary_nodes_from_files();
 
     // Load server public keys and private keys into the HashMaps
     {
         let mut pubkeys_map = pubkeys_mutex.lock().unwrap();
         let mut seckeys_map = seckeys_mutex.lock().unwrap();
-        let mut registry = node_registry.lock().unwrap();
 
-
-        // Combine ids, pubkeys, and seckeys and iterate over them
-        for (id, pubkey, seckey) in ids.iter().zip(pubkeys.iter()).zip(seckeys.iter()).map(|((id, pubkey), seckey)| (id, pubkey, seckey)) {
-            // Insert public and secret keys into the respective HashMaps
-            pubkeys_map.insert(id.clone(), pubkey.clone());
-            seckeys_map.insert(id.clone(), seckey.clone());
-
-            // Register nodes with the server
-            registry.add_node(id, pubkey.clone(), seckey.clone());
+        // Populate the HashMaps with id -> public key and id -> private key
+        for (id, pubkey) in node_registry_populated.nodes.lock().unwrap().iter() {
+            pubkeys_map.insert(id.clone(), pubkey.pub_key.clone());
         }
 
-        // Debug print to check if nodes are properly registered
-        println!("Node registry after population:");
-        for (id, node) in &registry.nodes {
-            println!("ID: {}, Public Key: {:?}", id, node.public_key);
-        }
-        println!("Loaded server public keys and private keys and node registry.");
+        println!("Loaded server public keys and private keys.");
     }
 
     // Reset the user list
@@ -227,9 +161,10 @@ fn main() {
                 let clients_clone = Arc::clone(&clients_mutex);
                 let pubkeys_clone = Arc::clone(&pubkeys_mutex);
                 let seckeys_clone: Arc<Mutex<HashMap<String, RsaPrivateKey>>> = Arc::clone(&seckeys_mutex);
+                let node_registry_clone = Arc::clone(&node_registry);
 
                 thread::spawn(move || {
-                    handle_client(stream, clients_clone, pubkeys_clone, seckeys_clone);
+                    handle_client(stream, clients_clone, pubkeys_clone, seckeys_clone, node_registry_clone);
                 });
             }
             Err(e) => {

@@ -1,5 +1,5 @@
 mod crypto;
-
+mod intermediary_node;
 use std::io::{self, Read, Write};
 use crypto::{generate_pubkey_list, dump_pubkey_list, dump_seckey_list};
 
