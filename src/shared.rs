@@ -1,14 +1,12 @@
 use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
-use std::{cmp::max, collections::HashMap};
 
 
 // implement shared.rs because dependencies weren't working if I just used intermediary_node.rs for some reason
 // use shared.rs to prevent circular dependencies (which rust doens't like..?)
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use rand::{rngs::OsRng, RngCore};
 use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit},
+    aead::{Aead, KeyInit},
     Aes256Gcm, Key, Nonce,
 };
 use std::str;

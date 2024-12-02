@@ -1,3 +1,4 @@
+#![allow(warnings)]
 extern crate rsa;
 extern crate sha2;
 
@@ -13,15 +14,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use crypto::{read_pubkey_list, generate_pubkey};
 use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey, LineEnding};
-use rsa::{RsaPublicKey, Pkcs1v15Encrypt}; 
+use rsa::RsaPublicKey; 
 use std::collections::HashMap;
-use base64::{engine::general_purpose::STANDARD, Engine};
-use rand::{rngs::OsRng, RngCore};
-use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit},
-    Aes256Gcm, Key, Nonce
-}; 
-use sha2::{Sha256, Digest};
 use tulip::{tulip_encrypt, tulip_receive};
 
 

@@ -2,10 +2,9 @@ extern crate rsa;
 extern crate rand;
 
 use rsa::{RsaPrivateKey, RsaPublicKey, Oaep, sha2::Sha256, pkcs1::{EncodeRsaPublicKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, DecodeRsaPrivateKey, LineEnding}};
-use rsa::pkcs8::{EncodePrivateKey, DecodePrivateKey};
 use rand::{rngs::OsRng, Rng};
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufWriter, BufRead, Write, Read};
+use std::io::{self, BufWriter, BufRead, Write};
 use std::path::Path;
 use bincode;
 

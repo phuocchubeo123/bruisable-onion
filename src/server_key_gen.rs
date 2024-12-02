@@ -1,8 +1,9 @@
+#![allow(warnings)]
 mod crypto;
 mod intermediary_node;
 mod tulip;
 mod shared;
-use std::io::{self, Read, Write};
+use std::io::{self};
 use crypto::{generate_pubkey_list, dump_pubkey_list, dump_seckey_list};
 
 

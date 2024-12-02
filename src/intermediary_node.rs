@@ -1,23 +1,12 @@
 extern crate rsa;
 extern crate sha2;
 
-use std::{cmp::max, str};
+use std::str;
 use std::collections::HashMap;
 
 use rsa::{
-    pkcs1::{
-        DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, EncodeRsaPublicKey, LineEnding,
-    },
-    sha2::Sha256, Oaep, Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey,
+    RsaPrivateKey, RsaPublicKey,
 };
-use rsa::pkcs8::{EncodePrivateKey, DecodePrivateKey};
-use base64::{engine::general_purpose::STANDARD, Engine};
-use rand::{rngs::OsRng, RngCore};
-use aes_gcm::{
-    aead::{Aead, AeadCore, KeyInit},
-    Aes256Gcm, Key, Nonce,
-};
-use sha2::Digest;
 
 // Import the IntermediaryNode struct and its implementation from shared.rs (due to dependency issues before...)
 use crate::shared::IntermediaryNode; 
