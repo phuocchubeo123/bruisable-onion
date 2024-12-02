@@ -4,7 +4,7 @@ mod tulip;
 mod shared;
 
 use crypto::{read_pubkey_list, read_seckey_list, reset_user_list, update_user_list};
-use tulip::{tulip_decrypt, process_tulip};
+use tulip::{process_tulip};
 use rsa::{RsaPublicKey, pkcs1::DecodeRsaPublicKey, RsaPrivateKey, Pkcs1v15Encrypt};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -122,7 +122,7 @@ fn handle_client(
 
                 let first_node = parts[0];
                 let tulip = parts[1];
-
+                // pass in the node registry instead of the secret keys list. Then allow individual intermediary nodes to do decryption
                 let registry = node_registry.lock().unwrap();
                 let tulip_result = process_tulip(tulip, first_node, &registry);
                 assert!(tulip_result.is_ok(), "processing tulip failed: {:?}", tulip_result);
@@ -185,7 +185,7 @@ fn main() {
             pubkeys_map.insert(id.clone(), pubkey.clone());
             seckeys_map.insert(id.clone(), seckey.clone());
 
-            // Register nodes with the registry
+            // Register nodes with the registry of intermediary nodes
             registry.insert(id.clone(), IntermediaryNode { public_key: pubkey.clone(), private_key: seckey.clone(), id: id.clone() });
         }
 

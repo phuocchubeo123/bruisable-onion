@@ -19,11 +19,11 @@ use aes_gcm::{
 };
 use sha2::Digest;
 
-// Import the IntermediaryNode struct and its implementation
-use crate::shared::IntermediaryNode; // Import from shared.rs
+// Import the IntermediaryNode struct and its implementation from shared.rs (due to dependency issues before...)
+use crate::shared::IntermediaryNode; 
 
 
-
+// registers node
 pub fn register_node(
     nodes: &mut HashMap<String, IntermediaryNode>,
     id: &str,
