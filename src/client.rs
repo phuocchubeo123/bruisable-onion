@@ -6,8 +6,9 @@ mod crypto;
 mod tulip;
 mod intermediary_node;
 mod shared;
+mod globals;
 
-
+use std::time::Instant;
 use std::net::TcpStream;
 use std::io::{self, Write, Read};
 use std::sync::{Arc, Mutex};
@@ -58,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // clone Arc to move into thread
             let mut read_stream = stream.try_clone().unwrap();
             let existing_users_thread = Arc::clone(&existing_users);
-            
+            let mut start2 = Instant::now();
             thread::spawn(move || {
                 let mut buffer = [0; 512];
                 // ensure there is something to fetch from buffer
@@ -90,10 +91,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // later we will add these indexes into the metadata of the onion, specifically in the part encrypted with the public key
                         // for now this only includes the current symmetric key for the node
                         println!("Raw received message: {}", received_message);
-
+                        let start3: Instant = Instant::now();
                         let result_message = tulip_receive(&received_message.to_string(), &personal_seckey);
                         assert!(result_message.is_ok(), "tulip_receive failed: {:?}", result_message);
-
+                        let duration2 = start2.elapsed();
+                        let duration3 = start3.elapsed();
+                        println!("TIMER RESULT: End-to-end delivery time: {:?}", duration2);
+                        println!("TIMER RESULT: Time for client to decrypt final part of onion:  {:?}", duration3);
                         let message = result_message.unwrap();
                         println!("Received message: {}", message);
                     }
@@ -129,33 +133,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // lock the server_nodes to safely access it
                 let server_nodes_locked = server_nodes.lock().unwrap();
+                
+
+                if globals::MIXERS + globals::GATEKEEPERS > server_nodes_locked.len(){
+                    return Err("MIXERS & GATEKEEPERS global is larger than selected intermediary nodes when running server key gen".into());
+                }
 
                 // phuoc: I will just focus on tulip sampling now, I will need to delete the onion sampling code
                 // select up to three mixers from server_nodes, with their IDs and public keys
-                println!("Choosing 3 random mixers.");
+                println!("Choosing # MIXERS random mixers.");
                 let selected_mixers: Vec<(&str, &RsaPublicKey)> = server_nodes_locked
                     .iter()
-                    .take(3)  // Get the first three nodes if available
+                    .take(globals::MIXERS)  // Get the first three nodes if available
                     .map(|(id, pubkey)| (id.as_str(), pubkey))
                     .collect();
 
 
                 // ensure we have exactly three nodes for encryption
-                if selected_mixers.len() < 3 {
+                if selected_mixers.len() < globals::MIXERS {
                     println!("Insufficient mixers available for tulip encryption.");
                     continue;
                 }
 
-                println!("Choosing 2 random gatekeepers.");
+                println!("Choosing # globals::GATEKEEPERS random gatekeepers.");
                 let selected_gatekeepers: Vec<(&str, &RsaPublicKey)> = server_nodes_locked
                     .iter()
-                    .take(2)  // Get the first three nodes if available
+                    .take(globals::GATEKEEPERS)  // Get the first three nodes if available
                     .map(|(id, pubkey)| (id.as_str(), pubkey))
                     .collect();
 
 
                 // ensure we have exactly three nodes for encryption
-                if selected_gatekeepers.len() < 2 {
+                if selected_gatekeepers.len() < globals::GATEKEEPERS {
                     println!("Insufficient gatekeepers available for tulip encryption.");
                     continue;
                 }
@@ -166,9 +175,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // tulip encryption
                 let nonce_list_len = selected_mixers.len() + selected_gatekeepers.len();
                 let nonce_list = vec![&[0; 12]; nonce_list_len];
-                let encrypted_tulip = tulip_encrypt(&message, &recipient_pubkey, &recipient, &selected_mixers, &selected_gatekeepers, &nonce_list, &2);
 
+                // STARTING ENCRYPTION TIMER FOR CLIENT
+                let start = Instant::now();
+
+                //start encryption end to end timer
+                start2 = Instant::now();
+                let encrypted_tulip = tulip_encrypt(&message, &recipient_pubkey, &recipient, &selected_mixers, &selected_gatekeepers, &nonce_list, &2);
                 assert!(encrypted_tulip.is_ok(), "tulip_encrypt failed: {:?}", encrypted_tulip);
+                let duration = start.elapsed();
+                println!("TIMER RESULTS: Time taken to encrypt message & form tulip: {:?}", duration);
+                
                 let tulip = encrypted_tulip.unwrap();
 
                 let first_mixer = selected_mixers[0].0.to_string();

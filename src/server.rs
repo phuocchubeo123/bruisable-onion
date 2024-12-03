@@ -3,6 +3,7 @@ extern crate rsa;
 mod crypto;
 mod tulip;
 mod shared;
+mod globals;
 
 use crypto::{read_pubkey_list, read_seckey_list, update_user_list};
 use tulip::process_tulip;
@@ -13,6 +14,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::thread;
 use std::io::{BufRead, BufReader};
+use std::time::Instant;
 mod intermediary_node;
 use crate::shared::IntermediaryNode; // Import from shared.rs
 
@@ -122,8 +124,14 @@ fn handle_client(
                 let tulip = parts[1];
                 // pass in the node registry instead of the secret keys list. Then allow individual intermediary nodes to do decryption
                 let registry = node_registry.lock().unwrap();
+
+                //START TIMER
+                let start = Instant::now();
                 let tulip_result = process_tulip(tulip, first_node, &registry);
                 assert!(tulip_result.is_ok(), "processing tulip failed: {:?}", tulip_result);
+                
+                let duration = start.elapsed();
+                println!("TIMER START: Time taken to decrypt all intermediary nodes of onion: {:?}", duration);
 
                 let (recipient, current_tulip) = tulip_result.unwrap();
 

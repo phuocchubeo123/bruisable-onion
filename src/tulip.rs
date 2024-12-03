@@ -1,6 +1,6 @@
 use std::{cmp::max, collections::HashMap};
 
-use crate::shared::IntermediaryNode; // Import from shared.rs
+use crate::{globals, shared::IntermediaryNode}; // Import from shared.rs
 
 // Import IntermediaryNode
 use rsa::{Pkcs1v15Encrypt, RsaPrivateKey, RsaPublicKey};
@@ -11,7 +11,6 @@ use aes_gcm::{
     Aes256Gcm, Key, Nonce,
 };
 use std::str;
-
 use sha2::{Sha256, Digest};
 
 
@@ -29,8 +28,8 @@ pub fn tulip_encrypt(
     max_bruise: &usize
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut rng = OsRng; 
-    let l1 = mixers.len(); // Number of Mixers
-    let l2 = gatekeepers.len(); // Number of Gatekeepers
+    let l1 = globals::MIXERS; // Number of Mixers
+    let l2 = globals::GATEKEEPERS; // Number of Gatekeepers
     let l = l1 + l2 + 1;
 
     // Step 1: Generating layer keys and master key
@@ -138,7 +137,7 @@ pub fn tulip_encrypt(
 
     for i in 0..l {
         // hash the ring
-        let ell = max(1, l1 + 2 - i);
+        let ell = max(1, l1.saturating_add(2).saturating_sub(i));
 
         println!("Creating vAi for hop index {} with sepal length to hash equals to {}", i, ell);
 
