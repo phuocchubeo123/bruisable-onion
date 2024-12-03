@@ -442,6 +442,12 @@ pub fn tulip_encrypt(
         S_enc.iter().map(|x| STANDARD.encode(&x)).collect::<Vec<_>>().join(",,"),
     );
 
+    // Log the size of the final tulip in bytes and KB before returning
+    let final_onion_size = final_onion.as_bytes().len(); // Size in bytes
+    let final_onion_size_kb = final_onion_size as f64 / 1024.0; // Size in KB
+    println!("Tulip size before returning in tulip.rs: {:.2} KB", final_onion_size_kb);
+
+
     Ok(final_onion)
 }
 

@@ -182,7 +182,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 //start encryption end to end timer
                 start2 = Instant::now();
                 let encrypted_tulip = tulip_encrypt(&message, &recipient_pubkey, &recipient, &selected_mixers, &selected_gatekeepers, &nonce_list, &2);
-                assert!(encrypted_tulip.is_ok(), "tulip_encrypt failed: {:?}", encrypted_tulip);
+                //for debugging add in the size of the tulip if an error occurs
+                match encrypted_tulip {
+                    Ok(ref tulip) => {
+                        let tulip_size = tulip.as_bytes().len(); // Size in bytes
+                        let tulip_size_kb = tulip_size as f64 / 1024.0; // Size in KB
+                        println!("Tulip size in client.rs: {:.2} KB", tulip_size_kb);
+                    }
+                    Err(ref e) => {
+                        let message_size = message.as_bytes().len(); // Assuming `message` is the input
+                        let message_size_kb = message_size as f64 / 1024.0; // Size in KB
+                        println!("tulip_encrypt failed with error: {:?}", e);
+                        println!("Message size before encryption: {:.2} KB", message_size_kb);
+                    }
+                }
                 let duration = start.elapsed();
                 println!("TIMER RESULTS: Time taken to encrypt message & form tulip: {:?}", duration);
                 
