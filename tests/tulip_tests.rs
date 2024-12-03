@@ -56,9 +56,11 @@ fn test_tulip() {
     let (recipient_seckey, recipient_pubkey) = generate_pubkey().expect("Cannot generate new keys for user.");
 
     // Prepare server keys
+    let num_mixers = 4;
+    let num_gatekeepers = 3;
     let server_nodes_locked = server_nodes.lock().unwrap();
-    let mixers: Vec<(&str, &RsaPublicKey)> = server_nodes_locked.iter().take(3).map(|(id, pubkey)| (id.as_str(), pubkey)).collect();
-    let gatekeepers: Vec<(&str, &RsaPublicKey)> = server_nodes_locked.iter().skip(3).take(2).map(|(id, pubkey)| (id.as_str(), pubkey)).collect();
+    let mixers: Vec<(&str, &RsaPublicKey)> = server_nodes_locked.iter().take(num_mixers).map(|(id, pubkey)| (id.as_str(), pubkey)).collect();
+    let gatekeepers: Vec<(&str, &RsaPublicKey)> = server_nodes_locked.iter().skip(num_mixers).take(num_gatekeepers).map(|(id, pubkey)| (id.as_str(), pubkey)).collect();
 
     // Prepare nonces and max_bruise
     let y = generate_test_nonces(mixers.len() + gatekeepers.len());
