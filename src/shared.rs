@@ -95,10 +95,11 @@ impl IntermediaryNode {
         let layer_nonce = Nonce::from_slice(&layer_nonce_bytes);
     
         // Get verification hashes for the sepal
-        let vAi_string = e2_parts[1].to_string();
+        let vAi_string = H_parts[2].to_string();
         let vAi = vAi_string
-            .split(",")
+            .split("..")
             .map(|x| STANDARD.decode(x).expect("Failed to decode a hash in vAi."))
+            .map(|x| self.private_key.decrypt(Pkcs1v15Encrypt, &x).expect("Cannot decrypt sepal hash for tulip_decrypt"))
             .collect::<Vec<_>>();
     
         println!("All the vAi:");
@@ -155,7 +156,7 @@ impl IntermediaryNode {
             let c = aes_gcm_master.decrypt(&layer_nonce, &*STANDARD.decode(c_encrypted)?)?;
             println!("Decrypt content successfully using master key!");
     
-            let mut b = STANDARD.decode(H_parts[2]).expect("Decoding B1 for LastGateKeeper failed!");
+            let mut b = STANDARD.decode(H_parts[3]).expect("Decoding B1 for LastGateKeeper failed!");
             b = aes_gcm_master.decrypt(&layer_nonce, b.as_slice())?;
             println!("Decrypt b successfully using master key!");
     
@@ -206,7 +207,7 @@ impl IntermediaryNode {
     
         // Process B and compute the hash
         let mut B = Vec::<_>::new();
-        for i in 2..H_parts.len() {
+        for i in 3..H_parts.len() {
             B.push(STANDARD.decode(H_parts[i]).expect("Decoding Bij failed!"));
         }
         // Decrypt all Bi
@@ -244,12 +245,14 @@ impl IntermediaryNode {
         let next_person = b1_parts[0].to_string();
         let next_E1 = STANDARD.decode(b1_parts[1])?;
         let next_E2 = STANDARD.decode(b1_parts[2])?;
+        let next_vAi = b1_parts[3];
     
         // create header
         let next_H = format!(
-            "{},,{},,{}",
+            "{},,{},,{},,{}",
             STANDARD.encode(&next_E1),
             STANDARD.encode(&next_E2),
+            next_vAi,
             B.iter().rev().take(B.len()-1).rev().map(|x| STANDARD.encode(x)).collect::<Vec<_>>().join(",,"),
         );
     

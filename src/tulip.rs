@@ -267,7 +267,7 @@ pub fn tulip_encrypt(
     let mut E1 = pubkey_gatekeeper_last.encrypt(&mut rng, Pkcs1v15Encrypt, e1_gatekeeper_last.as_bytes())?; // E1 is encrypted with the pubkey of the last gatekeeper
     let mut E2 = pubkey_gatekeeper_last.encrypt(&mut rng, Pkcs1v15Encrypt, e2_gatekeeper_last.as_bytes())?; // E1 is encrypted with the pubkey of the last gatekeeper
 
-    let vA_gatekeeper_last = vA[l-1].split(",,").collect::<Vec<_>>();
+    let mut current_vAi = vA[l-1].split(",,").collect::<Vec<_>>();
 
     println!("Created E for the last gatekeeper.");
 
@@ -275,9 +275,10 @@ pub fn tulip_encrypt(
         "{},,{},,{},,{}",
         STANDARD.encode(&E1),
         STANDARD.encode(&E2),
-        vA_gatekeeper_last
+        current_vAi
+            .clone()
             .into_iter()
-            .map(|x| pubkey_gatekeeper_last.encrypt(&mut rng, Pkcs1v15Encrypt, x.as_bytes()).expect("Cannot encrypt sepal hash last gatekeeper"))
+            .map(|x| pubkey_gatekeeper_last.encrypt(&mut rng, Pkcs1v15Encrypt, STANDARD.decode(x).expect("Cannot decode sepal hash last gatekeeper").as_slice()).expect("Cannot encrypt sepal hash last gatekeeper"))
             .map(|x| STANDARD.encode(x))
             .collect::<Vec<_>>()
             .join(".."),
@@ -295,17 +296,24 @@ pub fn tulip_encrypt(
     for current_id in (0..(l2-1)).rev() { // current_id from l2-2 to 0
         let hop_index = current_id + l1; 
 
-        let next_gatekeeper_id = gatekeepers[current_id+1].0; // I_{i+1}
+        let (next_gatekeeper_id, next_gatekeeper_pubkey) = gatekeepers[current_id+1];
         let current_gatekeeper_pubkey = gatekeepers[current_id].1; // pk(P_i)
         let current_layer_key = k[hop_index]; // k_i
         let current_layer_nonce = y[hop_index]; // y_i
 
         // Create Bi and the tag first
         let b_gatekeeper = format!( // b_{i, 1} = (I_{i+1}, E_{i+1}})
-            "{}||{}||{}",
+            "{}||{}||{}||{}",
             next_gatekeeper_id,
             STANDARD.encode(&E1),
             STANDARD.encode(&E2),
+            current_vAi
+                .clone()
+                .into_iter()
+                .map(|x| next_gatekeeper_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, STANDARD.decode(x).expect("Cannot decode sepal hash gatekeeper").as_slice()).expect("Cannot encrypt sepal hash mixer"))
+                .map(|x| STANDARD.encode(x))
+                .collect::<Vec<_>>()
+                .join(".."),
         );
         B.push(b_gatekeeper.as_bytes().to_vec());
         // Create tag t
@@ -347,15 +355,16 @@ pub fn tulip_encrypt(
         E1 = current_gatekeeper_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e1_gatekeeper.as_bytes())?;
         E2 = current_gatekeeper_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e2_gatekeeper.as_bytes())?;
 
-        let vA_gatekeeper = vA[hop_index+1].split(",,").collect::<Vec<_>>();
+        current_vAi = vA[hop_index+1].split(",,").collect::<Vec<_>>();
 
         H = format!(
             "{},,{},,{},,{}",
             STANDARD.encode(&E1),
             STANDARD.encode(&E2),
-            vA_gatekeeper
+            current_vAi
+                .clone()
                 .into_iter()
-                .map(|x| pubkey_gatekeeper_last.encrypt(&mut rng, Pkcs1v15Encrypt, x.as_bytes()).expect("Cannot encrypt sepal hash mixer"))
+                .map(|x| current_gatekeeper_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, STANDARD.decode(x).expect("Cannot decode sepal hash gatekeeper").as_slice()).expect("Cannot encrypt sepal hash gatekeeper"))
                 .map(|x| STANDARD.encode(x))
                 .collect::<Vec<_>>()
                 .join(".."),
@@ -376,10 +385,13 @@ pub fn tulip_encrypt(
         let hop_index = current_id;
 
         let mut next_node_id = "Node 0"; // dummy for next_node_id
+        let mut next_node_pubkey = mixers[hop_index].1;
         if current_id < l1-1 {
             next_node_id = mixers[current_id+1].0;
+            next_node_pubkey = mixers[current_id+1].1;
         } else {
             next_node_id = gatekeepers[0].0;
+            next_node_pubkey = gatekeepers[0].1;
         }
         let current_mixer_pubkey = mixers[hop_index].1; // pk(P_i)
         let current_layer_key = k[hop_index]; // k_i
@@ -390,10 +402,17 @@ pub fn tulip_encrypt(
 
         // Create b_{i, 1} and create the tag first, before encrypt every Bi
         let b_mixer = format!( // b_{i, 1} = (I_{i+1}, E_{i+1}})
-            "{}||{}||{}",
+            "{}||{}||{}||{}",
             next_node_id,
             STANDARD.encode(&E1),
             STANDARD.encode(&E2),
+            current_vAi
+                .clone()
+                .into_iter()
+                .map(|x| next_node_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, STANDARD.decode(x).expect("Cannot decode sepal hash mixer").as_slice()).expect("Cannot encrypt sepal hash mixer"))
+                .map(|x| STANDARD.encode(x))
+                .collect::<Vec<_>>()
+                .join(".."),
         );
         B.push(b_mixer.as_bytes().to_vec());
 
@@ -439,15 +458,16 @@ pub fn tulip_encrypt(
         E1 = current_mixer_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e1_mixer.as_bytes())?;
         E2 = current_mixer_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e2_mixer.as_bytes())?;
 
-        let vA_mixer = vA[hop_index+1].split(",,").collect::<Vec<_>>();
+        current_vAi = vA[hop_index+1].split(",,").collect::<Vec<_>>();
 
         H = format!(
             "{},,{},,{},,{}",
             STANDARD.encode(&E1),
             STANDARD.encode(&E2),
-            vA_mixer
+            current_vAi
+                .clone()
                 .into_iter()
-                .map(|x| pubkey_gatekeeper_last.encrypt(&mut rng, Pkcs1v15Encrypt, x.as_bytes()).expect("Cannot encrypt sepal hash mixer"))
+                .map(|x| current_mixer_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, STANDARD.decode(x).expect("Cannot decode sepal hash mixer").as_slice()).expect("Cannot encrypt sepal hash mixer"))
                 .map(|x| STANDARD.encode(x))
                 .collect::<Vec<_>>()
                 .join(".."),

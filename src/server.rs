@@ -112,7 +112,7 @@ fn handle_client(
 
                 // split the received message format: Recipient_ID|Enc_R_PK(sym_K4)|Enc_symK4(message)
                 let parts: Vec<&str> = received_message.split("--").collect();
-                println!("Parsed parts: {:?}", parts);
+                // println!("Parsed parts: {:?}", parts);
 
                 // ensure the message format has three parts (Recipient ID, Encrypted Public Key, Encrypted Message)
                 if parts.len() != 2 {
