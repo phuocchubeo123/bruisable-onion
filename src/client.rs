@@ -9,10 +9,12 @@ mod shared;
 mod globals;
 
 use std::time::Instant;
+use log::info;
 use std::net::TcpStream;
 use std::io::{self, Write, Read};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use chrono::Local;
 use crypto::{read_pubkey_list, generate_pubkey};
 use rsa::pkcs1::{DecodeRsaPublicKey, EncodeRsaPublicKey, LineEnding};
 use rsa::RsaPublicKey; 
@@ -21,12 +23,18 @@ use tulip::{tulip_encrypt, tulip_receive};
 
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     match TcpStream::connect("127.0.0.1:7878") {
         Ok(mut stream) => {
-            println!("Successfully connected to server on port 7878");
+            eprintln!("Successfully connected to server on port 7878");
 
             // prompt for username
-            println!("Enter your username:");
+            // println!("Enter your username:");
+            // let mut username = String::new();
+            // io::stdin().read_line(&mut username).unwrap();
+            eprint!("Enter your username: "); // Use eprint! for the prompt
+            io::stderr().flush().unwrap(); // Flush stderr to ensure it appears immediately
+        
             let mut username = String::new();
             io::stdin().read_line(&mut username).unwrap();
 
@@ -43,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let server_nodes = Arc::new(Mutex::new(
                 server_ids.into_iter().zip(server_pubkeys.into_iter()).collect::<HashMap<String, RsaPublicKey>>(),
             ));
-            println!("Loaded server public keys from PKKeys.txt");
+            //println!("Loaded server public keys from PKKeys.txt");
 
             // load existing users and their public keys from UserKeys.txt into HashMap
             let (usernames, user_pubkeys) = read_pubkey_list("UserKeys.txt").expect("Failed to read user public keys from UserKeys.txt");
@@ -51,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let existing_users = Arc::new(Mutex::new(
                 usernames.into_iter().zip(user_pubkeys.into_iter()).collect::<HashMap<String, RsaPublicKey>>(),
             ));
-            println!("Loaded existing user public keys from UserKeys.txt");
+            //println!("Loaded existing user public keys from UserKeys.txt");
 
             // ---------- RECEIVING MESSAGES ------------ //
 
@@ -77,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // insert new user into the existing_users HashMap
                                 let mut users_lock = existing_users_thread.lock().unwrap();
                                 users_lock.insert(new_username.clone(), new_pubkey);
-                                println!("Added new user {} with public key", new_username);
+                                //println!("Added new user {} with public key", new_username);
                             },
                             Err(e) => {
                                 eprintln!("Failed to decode public key for {}: {}", new_username, e);
@@ -90,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // using index 4 here because we are using three intermediary nodes, so the recipient will have index 4
                         // later we will add these indexes into the metadata of the onion, specifically in the part encrypted with the public key
                         // for now this only includes the current symmetric key for the node
-                        println!("Raw received message: {}", received_message);
+                        //println!("Raw received message: {}", received_message);
                         let start3: Instant = Instant::now();
                         let result_message = tulip_receive(&received_message.to_string(), &personal_seckey);
                         assert!(result_message.is_ok(), "tulip_receive failed: {:?}", result_message);
@@ -99,7 +107,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("TIMER RESULT: End-to-end delivery time: {:?}", duration2);
                         println!("TIMER RESULT: Time for client to decrypt final part of onion:  {:?}", duration3);
                         let message = result_message.unwrap();
-                        println!("Received message: {}", message);
+                        eprintln!("Received message: {}", message);
+                        let now = Local::now(); // Get the current local time
+                        println!("End-to-end finish now: {}", now);
                     }
                 }
             });
@@ -107,19 +117,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // eileen edits to main thread loop for sending messages
             // ---------- SENDING ENCRYPTED MESSAGES ------------ //
             loop {
-                println!("Enter recipient:");
+                // println!("Enter recipient:");
+                // let mut recipient = String::new();
+                // io::stdin().read_line(&mut recipient).unwrap();
+                // let recipient = recipient.trim().to_string();
+            
+                // println!("Enter your message:");
+                // let mut message = String::new();
+                // io::stdin().read_line(&mut message).unwrap();
+                // let username = username.trim().to_string();
+                // let no_username_message = message.trim().to_string();
+                // let message = format!("(from {}) {}", username, no_username_message);
+
+                    // Ask for recipient
+                eprintln!("Enter recipient:");
                 let mut recipient = String::new();
                 io::stdin().read_line(&mut recipient).unwrap();
                 let recipient = recipient.trim().to_string();
-            
-                println!("Enter your message:");
+
+                // Ask for message
+                eprintln!("Enter your message:");
                 let mut message = String::new();
                 io::stdin().read_line(&mut message).unwrap();
+
+                // Trim username and message
                 let username = username.trim().to_string();
                 let no_username_message = message.trim().to_string();
+
+                // Format message
                 let message = format!("(from {}) {}", username, no_username_message);
 
-
+                let now = Local::now(); // Get the current local time
+                println!("TIMER RESULT: End-to-end start now: {}", now);
 
 
                 // encrypt the initial message with a symmetric key for the recipient
@@ -141,7 +170,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // phuoc: I will just focus on tulip sampling now, I will need to delete the onion sampling code
                 // select up to three mixers from server_nodes, with their IDs and public keys
-                println!("Choosing # MIXERS random mixers.");
+                //println!("Choosing # MIXERS random mixers.");
                 let selected_mixers: Vec<(&str, &RsaPublicKey)> = server_nodes_locked
                     .iter()
                     .take(globals::MIXERS)  // Get the first three nodes if available
@@ -155,7 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
 
-                println!("Choosing # globals::GATEKEEPERS random gatekeepers.");
+                //println!("Choosing # globals::GATEKEEPERS random gatekeepers.");
                 let selected_gatekeepers: Vec<(&str, &RsaPublicKey)> = server_nodes_locked
                     .iter()
                     .take(globals::GATEKEEPERS)  // Get the first three nodes if available

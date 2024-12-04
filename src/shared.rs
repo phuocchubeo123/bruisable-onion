@@ -42,7 +42,7 @@ impl IntermediaryNode {
     
         let parts: Vec<&str> = tulip_string.split("||").collect();
     
-        println!("Number of tulip parts: {}", parts.len());
+        //println!("Number of tulip parts: {}", parts.len());
     
         if parts.len() != 5 {
             return Err("Invalid onion layer format".into());
@@ -54,7 +54,7 @@ impl IntermediaryNode {
         let H_parts: Vec<&str> = H_string.split(",,").collect();
     
         // println!("The received header is: {}", H);
-        println!("The header has {} parts!", H_parts.len());
+        //println!("The header has {} parts!", H_parts.len());
     
     
         // Process E1, which is role | tag | hop_index | key
@@ -63,21 +63,21 @@ impl IntermediaryNode {
         let e1_string = str::from_utf8(e1.as_slice()).unwrap().to_string();
         let e1_parts: Vec<&str> = e1_string.split('|').collect();
     
-        println!("Received e1: {}", e1_string);
+        //println!("Received e1: {}", e1_string);
     
         // Get role
         let role = e1_parts[0].to_string(); // role
         if role == "Recipient" {
-            eprintln!("Something's wrong! Cannot let the server know the message for recipient!");
+            //eprintln!("Something's wrong! Cannot let the server know the message for recipient!");
         }
     
-        println!("Received the role: {}", role);
+       // println!("Received the role: {}", role);
     
         // Get hop_index
         let hop_index_string = e1_parts[2].to_string();
         let hop_index = hop_index_string.parse::<usize>().unwrap(); // parse hop_index as usize
     
-        println!("Received the hop index: {}", hop_index);
+        //println!("Received the hop index: {}", hop_index);
     
         // Process E2, which is nonce | vA
         let E2 = STANDARD.decode(H_parts[1])?; // E2
@@ -85,7 +85,7 @@ impl IntermediaryNode {
         let e2_string = str::from_utf8(e2.as_slice()).unwrap().to_string();
         let e2_parts: Vec<&str> = e2_string.split('|').collect();
     
-        println!("Received e2!");
+        //println!("Received e2!");
     
         // Get layer key and nonce
         let layer_key = STANDARD.decode(e1_parts[3])?;
@@ -102,9 +102,9 @@ impl IntermediaryNode {
             .map(|x| self.private_key.decrypt(Pkcs1v15Encrypt, &x).expect("Cannot decrypt sepal hash for tulip_decrypt"))
             .collect::<Vec<_>>();
     
-        println!("All the vAi:");
+        //println!("All the vAi:");
         for vA in vAi.iter() {
-            println!("{}", STANDARD.encode(vA.clone()));
+            //println!("{}", STANDARD.encode(vA.clone()));
         }
     
         // Step 2: Process the sepal and check the sepal
@@ -114,7 +114,7 @@ impl IntermediaryNode {
     
         let mut S_nonce = S_nonce_string.split(",,").map(|x| STANDARD.decode(x).expect("Failed to decode sepal nonce!")).collect::<Vec<_>>();
     
-        println!("How many nonces: {}", S_nonce.len());
+        //println!("How many nonces: {}", S_nonce.len());
     
         // for uu in S_enc_string.split(",,") {
         //     println!("{}", uu.to_string());
@@ -122,7 +122,7 @@ impl IntermediaryNode {
         // }
     
         let mut S_enc = S_enc_string.split(",,").map(|x| STANDARD.decode(x).expect("Failed to decode sepal encrypted.")).collect::<Vec<_>>();
-        println!("How many sepals: {}", S_enc.len());
+        //println!("How many sepals: {}", S_enc.len());
     
         // decrypt, also make sepal for next layer
         for i in 0..S_nonce.len() {
@@ -138,12 +138,12 @@ impl IntermediaryNode {
     
         let sepal_hash = sepal_hasher.finalize().to_vec();
     
-        println!("The sepal hash is: {}", STANDARD.encode(sepal_hash.clone()));
+        //println!("The sepal hash is: {}", STANDARD.encode(sepal_hash.clone()));
     
         if vAi.iter().any(|x| x == sepal_hash.as_slice()) == false {
-            eprintln!("Malleable sepal!");
+            //eprintln!("Malleable sepal!");
         } else {
-            println!("Received valid sepal!");
+            //println!("Received valid sepal!");
         }
     
         // Step 3: Process content and check the tag
@@ -154,11 +154,11 @@ impl IntermediaryNode {
     
             let c_encrypted = parts[1]; // content
             let c = aes_gcm_master.decrypt(&layer_nonce, &*STANDARD.decode(c_encrypted)?)?;
-            println!("Decrypt content successfully using master key!");
+            //println!("Decrypt content successfully using master key!");
     
             let mut b = STANDARD.decode(H_parts[3]).expect("Decoding B1 for LastGateKeeper failed!");
             b = aes_gcm_master.decrypt(&layer_nonce, b.as_slice())?;
-            println!("Decrypt b successfully using master key!");
+            //println!("Decrypt b successfully using master key!");
     
             let mut content_hasher = Sha256::new();
             content_hasher.update(b.clone());
@@ -167,13 +167,13 @@ impl IntermediaryNode {
     
             let t = STANDARD.decode(e1_parts[1])?; // read the tag
     
-            println!("The reference tag is: {}", STANDARD.encode(&ref_tag));
-            println!("Received tag: {}", STANDARD.encode(&t));
+            //println!("The reference tag is: {}", STANDARD.encode(&ref_tag));
+            //println!("Received tag: {}", STANDARD.encode(&t));
     
             if t != ref_tag.to_vec() { // hopefully to_vec keeps the hash the same
-                eprintln!("Some party sent the wrong content!");
+                //eprintln!("Some party sent the wrong content!");
             } else {
-                println!("The content is verified");
+               //println!("The content is verified");
             }
     
             let b_string = String::from_utf8_lossy(&b).into_owned();
@@ -183,7 +183,7 @@ impl IntermediaryNode {
             let recipient = b_parts[0].to_string();
             let next_E = STANDARD.decode(b_parts[1])?;
     
-            println!("The intended recipient is {}", recipient);
+           // println!("The intended recipient is {}", recipient);
     
             // create header
             let next_H = format!(
@@ -203,7 +203,7 @@ impl IntermediaryNode {
         let c_encrypted = parts[1]; // content
         let c = aes_gcm.decrypt(&layer_nonce, &*STANDARD.decode(c_encrypted)?)?;
     
-        println!("Decrypt content successfully!");
+        //println!("Decrypt content successfully!");
     
         // Process B and compute the hash
         let mut B = Vec::<_>::new();
@@ -225,13 +225,13 @@ impl IntermediaryNode {
     
         let t = STANDARD.decode(e1_parts[1])?; // read the tag
     
-        println!("The reference tag is: {}", STANDARD.encode(&ref_tag));
-        println!("Received tag: {}", STANDARD.encode(&t));
+        //println!("The reference tag is: {}", STANDARD.encode(&ref_tag));
+        //println!("Received tag: {}", STANDARD.encode(&t));
     
         if t != ref_tag.to_vec() { // hopefully to_vec keeps the hash the same
-            eprintln!("Some party sent the wrong content!");
+            //eprintln!("Some party sent the wrong content!");
         } else {
-            println!("The content is verified");
+            //println!("The content is verified");
         }
     
     

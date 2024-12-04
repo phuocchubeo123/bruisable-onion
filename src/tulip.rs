@@ -81,7 +81,7 @@ pub fn tulip_encrypt(
         test_hasher.update(dec_s_enc.clone());
     }
     let test_sepal_hash = test_hasher.finalize().to_vec();
-    println!("The test sepal hash for the first layer is: {}", STANDARD.encode(&test_sepal_hash));
+    //println!("The test sepal hash for the first layer is: {}", STANDARD.encode(&test_sepal_hash));
 
     // Creating the clasp
 
@@ -94,7 +94,7 @@ pub fn tulip_encrypt(
         let mut Ti = Vec::<_>::new();
 
         for master_key_block in 0..max_bruise.clone() {
-            println!("Decrypting sepal key {}", master_key_block);
+            //println!("Decrypting sepal key {}", master_key_block);
             let nonce = S_nonce[master_key_block].clone();
             let enc_master_key = T[layer_id-1][master_key_block].clone();
             let dec_master_key = aes_gcm.decrypt(&nonce, enc_master_key.as_slice()).expect("Cannot decrypt sepal block");
@@ -102,7 +102,7 @@ pub fn tulip_encrypt(
         }
 
         for null_block in (max_bruise.clone())..(l1+1) {
-            println!("Decrypting sepal null {}", null_block);
+            //println!("Decrypting sepal null {}", null_block);
             let nonce = S_nonce[null_block].clone();
             let enc_null = T[layer_id-1][null_block].clone();
             let dec_null= aes_gcm.decrypt(&nonce, enc_null.as_slice()).expect("Cannot decrypt sepal block");
@@ -115,7 +115,7 @@ pub fn tulip_encrypt(
         T.push(Ti);
     }
 
-    println!("Done creating the sepal!");
+    //println!("Done creating the sepal!");
 
     // The hash that contains the dummy sepal block would not matter!
     for i in 0..l {  // Put a dummy sepal block T_{i, l1+2} in
@@ -129,7 +129,7 @@ pub fn tulip_encrypt(
         T[i].push(enc_rand);
     }
 
-    println!("Done creating the clasp.");
+    //println!("Done creating the clasp.");
 
     // Creating Aij, vAi
 
@@ -139,21 +139,21 @@ pub fn tulip_encrypt(
         // hash the ring
         let ell = max(1, l1.saturating_add(2).saturating_sub(i));
 
-        println!("Creating vAi for hop index {} with sepal length to hash equals to {}", i, ell);
+        //println!("Creating vAi for hop index {} with sepal length to hash equals to {}", i, ell);
 
         let mut vAi = Vec::<_>::new();
         for j in 0..(l1+1) {   // hash the ring
             if i < j && j < l1 + 1 { continue;}
-            println!("Start index for hash: {}", j);
+            //println!("Start index for hash: {}", j);
             let mut hasher = Sha256::new();
             for jj in 0..ell {
-                print!("{} ", (j+jj) % (l1 + 2));
+                //print!("{} ", (j+jj) % (l1 + 2));
                 hasher.update(T[i][(j + jj) % (l1 + 2)].clone());
             }
-            println!();
+            //println!();
             let Aij = hasher.finalize().to_vec();
 
-            println!("Hash: {}", STANDARD.encode(Aij.clone()));
+            //println!("Hash: {}", STANDARD.encode(Aij.clone()));
 
             vAi.push(Aij);
         }
@@ -168,12 +168,12 @@ pub fn tulip_encrypt(
             .join(",,");
 
         let vAi_string_parts = vAi_string.split(",,").collect::<Vec<_>>();
-        println!("The vAi for hop index {} has {} hashes.", i, vAi_string_parts.len());
+        //println!("The vAi for hop index {} has {} hashes.", i, vAi_string_parts.len());
 
         vA.push(vAi_string);
     }
 
-    println!("Done creating the vA vectors");
+   //println!("Done creating the vA vectors");
 
 
     // Step 2: Forming the header and content for the last onion layer a.k.a the receiver
@@ -209,10 +209,10 @@ pub fn tulip_encrypt(
     let nonce_last = Nonce::from_slice(&[0; 12]); // Zero-nonce for the recipient
     c = aes_gcm_last.encrypt(nonce_last, c.as_slice())?;   // universal variable for content
 
-    println!("Created content for the last layer.");
+    //println!("Created content for the last layer.");
 
 
-    println!("Created header for the last layer.");
+    //println!("Created header for the last layer.");
 
 
     // Step 3: Forming the header and content for the last gatekeeper
@@ -235,7 +235,7 @@ pub fn tulip_encrypt(
     hasher_gatekeeper_last.update(c.clone());
     let t_gatekeeper_last = hasher_gatekeeper_last.finalize(); // tag for the last gatekeeper
 
-    println!("The tag for last gatekeeper hop index {} is: {}", l-2, STANDARD.encode(&t_gatekeeper_last));
+    //println!("The tag for last gatekeeper hop index {} is: {}", l-2, STANDARD.encode(&t_gatekeeper_last));
 
 
     // Encrypt content and Bi, note that here we use the master key
@@ -243,7 +243,7 @@ pub fn tulip_encrypt(
     let nonce_gatekeeper_last = Nonce::from_slice(y[l-2]); // last gatekeeper nonce for simplicity
     c = aes_gcm_gatekeeper_last.encrypt(nonce_gatekeeper_last, c.as_slice())?; // content for the last gatekeeper is the encryption of c_last under master_key
 
-    println!("Created content for the last gatekeeper.");
+    //println!("Created content for the last gatekeeper.");
 
     for i in 0..B.len() {
         B[i] = aes_gcm_gatekeeper_last.encrypt(nonce_gatekeeper_last, B[i].as_slice()).expect("Cannot encrypt new B");
@@ -269,7 +269,7 @@ pub fn tulip_encrypt(
 
     let mut current_vAi = vA[l-1].split(",,").collect::<Vec<_>>();
 
-    println!("Created E for the last gatekeeper.");
+    //println!("Created E for the last gatekeeper.");
 
     H = format!(
         "{},,{},,{},,{}",
@@ -285,7 +285,7 @@ pub fn tulip_encrypt(
         STANDARD.encode(&B[0])
     );
 
-    println!("Created header for the last gatekeeper with hop index {}", l-2);
+    //println!("Created header for the last gatekeeper with hop index {}", l-2);
 
 
     // Step 4: Forming the outer gatekeepers layers
@@ -324,7 +324,7 @@ pub fn tulip_encrypt(
         hasher_gatekeeper.update(c.clone());
         let t_gatekeeper = hasher_gatekeeper.finalize(); // the tag
 
-        println!("The tag for gatekeeper hop index {} is: {}", hop_index, STANDARD.encode(&t_gatekeeper));
+        //println!("The tag for gatekeeper hop index {} is: {}", hop_index, STANDARD.encode(&t_gatekeeper));
 
         // Now encrypt the content and Bi
 
@@ -332,12 +332,12 @@ pub fn tulip_encrypt(
         let nonce_gatekeeper = Nonce::from_slice(current_layer_nonce); // Constant nonce for simplicity
         c = aes_gcm_gatekeeper.encrypt(nonce_gatekeeper, c.as_slice())?;  // content
 
-        println!("Created content for the gatekeeper with hop index {}", hop_index);
+        //println!("Created content for the gatekeeper with hop index {}", hop_index);
 
         for i in 0..B.len() {
             B[i] = aes_gcm_gatekeeper.encrypt(nonce_gatekeeper, B[i].as_slice()).expect("Cannot encrypt new B");
         }
-        println!("Created B for the gatekeeper with hop index {} ", hop_index);
+        //println!("Created B for the gatekeeper with hop index {} ", hop_index);
 
         // Create E
         let e1_gatekeeper = format!(
@@ -371,10 +371,10 @@ pub fn tulip_encrypt(
             B.iter().map(|x| STANDARD.encode(&x)).rev().collect::<Vec<_>>().join(",,"),
         );
 
-        println!("Created header for the gatekeeper with hop index {}", hop_index);
+        //println!("Created header for the gatekeeper with hop index {}", hop_index);
     }
 
-    println!("Done processing all gatekeepers!");
+    //println!("Done processing all gatekeepers!");
 
     // Step 5: Forming the outer mixers layers
     // indexed from l1-1 to 0 in the mixers list
@@ -398,7 +398,7 @@ pub fn tulip_encrypt(
         let current_layer_nonce = y[hop_index]; // y_i
 
         let current_node_id = mixers[current_id].0;
-        println!("Creating tulip for mixer {}", current_node_id);
+        //println!("Creating tulip for mixer {}", current_node_id);
 
         // Create b_{i, 1} and create the tag first, before encrypt every Bi
         let b_mixer = format!( // b_{i, 1} = (I_{i+1}, E_{i+1}})
@@ -424,7 +424,7 @@ pub fn tulip_encrypt(
         hasher_mixer.update(c.clone());
         let t_mixer = hasher_mixer.finalize(); // the tag
 
-        println!("The tag for mixer hop index {} is: {}", hop_index, STANDARD.encode(&t_mixer));
+        //println!("The tag for mixer hop index {} is: {}", hop_index, STANDARD.encode(&t_mixer));
 
         // Start encrypting the content and Bi
         let aes_gcm_mixer = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&current_layer_key));
@@ -439,7 +439,7 @@ pub fn tulip_encrypt(
         // Encrypting content
         c = aes_gcm_mixer.encrypt(nonce_mixer, c.as_slice())?;  // content
 
-        println!("Created content for the mixer with hop index {}", hop_index);
+        //println!("Created content for the mixer with hop index {}", hop_index);
 
 
         // Create E
@@ -474,7 +474,7 @@ pub fn tulip_encrypt(
             B.iter().map(|x| STANDARD.encode(&x)).rev().collect::<Vec<_>>().join(",,"),
         );
 
-        println!("Created header for the mixer with hop index {}", hop_index);
+        //println!("Created header for the mixer with hop index {}", hop_index);
         // println!("The header is: {}", H);
     }
 
@@ -489,7 +489,7 @@ pub fn tulip_encrypt(
     // Log the size of the final tulip in bytes and KB before returning
     let final_onion_size = final_onion.as_bytes().len(); // Size in bytes
     let final_onion_size_kb = final_onion_size as f64 / 1024.0; // Size in KB
-    println!("Tulip size before returning in tulip.rs: {:.2} KB", final_onion_size_kb);
+    //println!("Tulip size before returning in tulip.rs: {:.2} KB", final_onion_size_kb);
 
 
     Ok(final_onion)
@@ -503,7 +503,7 @@ pub fn tulip_receive(
 
     let parts: Vec<&str> = tulip_string.split("||").collect();    
 
-    println!("Number of tulip parts: {}", parts.len());
+    //println!("Number of tulip parts: {}", parts.len());
 
     if parts.len() != 3 {
         return Err("Invalid onion layer format".into());
@@ -515,12 +515,12 @@ pub fn tulip_receive(
     let E = STANDARD.decode(H)?;
     let e = node_seckey.decrypt(Pkcs1v15Encrypt, &E)?;
 
-    println!("Decrypted e!");
+    //println!("Decrypted e!");
 
     let e_string = str::from_utf8(e.as_slice()).unwrap().to_string();
     let e_parts: Vec<&str> = e_string.split('|').collect();
 
-    println!("Received e: {}", e_string);
+    //println!("Received e: {}", e_string);
 
     // Get role
     let role = e_parts[0].to_string(); // role
@@ -528,13 +528,13 @@ pub fn tulip_receive(
         eprintln!("Something's wrong! Cannot let the server know the message for recipient!");
     }
 
-    println!("Received the role: {}", role);
+    //println!("Received the role: {}", role);
 
     // Get hop_index
     let hop_index_string = e_parts[2].to_string();
     let hop_index = hop_index_string.parse::<usize>().unwrap(); // parse hop_index as usize
 
-    println!("Received the hop index: {}", hop_index);
+    //println!("Received the hop index: {}", hop_index);
 
     // Get layer key and nonce
     let layer_key = STANDARD.decode(e_parts[3])?;
@@ -544,7 +544,7 @@ pub fn tulip_receive(
     let c_encrypted = parts[1]; // content
     let c = aes_gcm.decrypt(&layer_nonce, &*STANDARD.decode(c_encrypted)?)?;
 
-    println!("Decrypt content successfully!");
+    //println!("Decrypt content successfully!");
 
     let mut content_hasher = Sha256::new();
     content_hasher.update(c.clone());
@@ -552,17 +552,17 @@ pub fn tulip_receive(
 
     let t = STANDARD.decode(e_parts[1])?; // read the tag
 
-    println!("The reference tag is: {}", STANDARD.encode(&ref_tag));
-    println!("Received tag: {}", STANDARD.encode(&t));
+   // println!("The reference tag is: {}", STANDARD.encode(&ref_tag));
+    //println!("Received tag: {}", STANDARD.encode(&t));
 
-    if t != ref_tag.to_vec() { // hopefully to_vec keeps the hash the same
-        eprintln!("Some party sent the wrong content!");
-    } else {
-        println!("The content is verified");
-    }
+    // if t != ref_tag.to_vec() { // hopefully to_vec keeps the hash the same
+    //     eprintln!("Some party sent the wrong content!");
+    // } else {
+    //     println!("The content is verified");
+    // }
 
     let message = String::from_utf8_lossy(&c).to_string();
-    println!("Decrypted message: {}", message);
+    //println!("Decrypted message: {}", message);
 
     Ok(message)
 }
