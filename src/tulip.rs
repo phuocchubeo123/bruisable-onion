@@ -115,7 +115,7 @@ pub fn tulip_encrypt(
         T.push(Ti);
     }
 
-    //println!("Done creating the sepal!");
+    eprintln!("Done creating the sepal");
 
     // The hash that contains the dummy sepal block would not matter!
     for i in 0..l {  // Put a dummy sepal block T_{i, l1+2} in
@@ -129,7 +129,7 @@ pub fn tulip_encrypt(
         T[i].push(enc_rand);
     }
 
-    //println!("Done creating the clasp.");
+    eprintln!("Done creating the clasp.");
 
     // Creating Aij, vAi
 
@@ -153,7 +153,7 @@ pub fn tulip_encrypt(
             //println!();
             let Aij = hasher.finalize().to_vec();
 
-            //println!("Hash: {}", STANDARD.encode(Aij.clone()));
+            //eprintln!("Hash: {}", STANDARD.encode(Aij.clone()));
 
             vAi.push(Aij);
         }
@@ -243,7 +243,7 @@ pub fn tulip_encrypt(
     let nonce_gatekeeper_last = Nonce::from_slice(y[l-2]); // last gatekeeper nonce for simplicity
     c = aes_gcm_gatekeeper_last.encrypt(nonce_gatekeeper_last, c.as_slice())?; // content for the last gatekeeper is the encryption of c_last under master_key
 
-    //println!("Created content for the last gatekeeper.");
+    //eprintln!("Created content for the last gatekeeper.");
 
     for i in 0..B.len() {
         B[i] = aes_gcm_gatekeeper_last.encrypt(nonce_gatekeeper_last, B[i].as_slice()).expect("Cannot encrypt new B");
@@ -374,7 +374,7 @@ pub fn tulip_encrypt(
         //println!("Created header for the gatekeeper with hop index {}", hop_index);
     }
 
-    //println!("Done processing all gatekeepers!");
+    eprintln!("Done processing all gatekeepers");
 
     // Step 5: Forming the outer mixers layers
     // indexed from l1-1 to 0 in the mixers list
@@ -477,7 +477,7 @@ pub fn tulip_encrypt(
         //println!("Created header for the mixer with hop index {}", hop_index);
         // println!("The header is: {}", H);
     }
-
+    eprintln!("Done processing all mixers");
     let final_onion = format!(     // I will change the message format a bit. It will be: Header | Content | Sepal_nonce | Sepal_enc
         "{}||{}||{}||{}||\n",
         H,
@@ -588,13 +588,14 @@ pub fn process_tulip(
 
     
     for hop_index in 0..(globals::MIXERS + globals::GATEKEEPERS) {
-        let decrypt_result = current_node_obj.tulip_decrypt(&current_tulip, false);
+        let bruise = hop_index == 0; // Use bruise = true for the first hop
+        let decrypt_result = current_node_obj.tulip_decrypt(&current_tulip, bruise);
         assert!(decrypt_result.is_ok(), "tulip_decrypt failed: {:?}", decrypt_result);
         let (next_node, next_tulip) = decrypt_result.unwrap();
         
         current_node = next_node;
         current_tulip = next_tulip;
-
+    
         if hop_index < (globals::MIXERS + globals::GATEKEEPERS - 1) {
             // Get the next node from the registry
             let next_node_obj = node_registry.get(&current_node)
@@ -602,6 +603,7 @@ pub fn process_tulip(
             current_node_obj = next_node_obj;
         }
     }
+        
 
     Ok((current_node.to_string(), current_tulip.to_string()))
 }

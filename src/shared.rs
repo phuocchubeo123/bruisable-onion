@@ -258,6 +258,7 @@ impl IntermediaryNode {
     
         if role == "Mixer" {
             if bruise { // bruising the sepal, removing index 0
+                eprintln!("Mixer bruised onion!");
                 S_nonce.remove(0);
                 S_enc.remove(0);
             } else {

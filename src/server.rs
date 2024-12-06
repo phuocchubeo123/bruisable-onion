@@ -77,7 +77,7 @@ fn handle_client(
         let clients = clients.lock().unwrap();
         let broadcast_message = format!("{}\n{}", username, pem);
         for (recipient, mut recipient_stream) in clients.iter() {
-            println!("Broadcasting new key to {}", recipient);
+            //println!("Broadcasting new key to {}", recipient);
             recipient_stream.write_all(broadcast_message.as_bytes()).unwrap();
         }
     }
@@ -132,7 +132,7 @@ fn handle_client(
                 assert!(tulip_result.is_ok(), "processing tulip failed: {:?}", tulip_result);
                 
                 let duration = start.elapsed();
-                println!("TIMER START: Time taken to decrypt all intermediary nodes of onion: {:?}", duration);
+                //println!("TIMER START: Time taken to decrypt all intermediary nodes of onion: {:?}", duration);
 
                 let (recipient, current_tulip) = tulip_result.unwrap();
 

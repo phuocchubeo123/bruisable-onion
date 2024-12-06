@@ -104,12 +104,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         assert!(result_message.is_ok(), "tulip_receive failed: {:?}", result_message);
                         let duration2 = start2.elapsed();
                         let duration3 = start3.elapsed();
-                        println!("TIMER RESULT: End-to-end delivery time: {:?}", duration2);
-                        println!("TIMER RESULT: Time for client to decrypt final part of onion:  {:?}", duration3);
+                        //println!("TIMER RESULT: End-to-end delivery time: {:?}", duration2);
+                        //println!("TIMER RESULT: Time for client to decrypt final part of onion:  {:?}", duration3);
                         let message = result_message.unwrap();
                         eprintln!("Received message: {}", message);
                         let now = Local::now(); // Get the current local time
-                        println!("End-to-end finish now: {}", now);
+                        //println!("End-to-end finish now: {}", now);
                     }
                 }
             });
@@ -148,7 +148,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let message = format!("(from {}) {}", username, no_username_message);
 
                 let now = Local::now(); // Get the current local time
-                println!("TIMER RESULT: End-to-end start now: {}", now);
+                //println!("TIMER RESULT: End-to-end start now: {}", now);
 
 
                 // encrypt the initial message with a symmetric key for the recipient
@@ -170,7 +170,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // phuoc: I will just focus on tulip sampling now, I will need to delete the onion sampling code
                 // select up to three mixers from server_nodes, with their IDs and public keys
-                //println!("Choosing # MIXERS random mixers.");
+                eprintln!("Choosing random mixers.");
                 let selected_mixers: Vec<(&str, &RsaPublicKey)> = server_nodes_locked
                     .iter()
                     .take(globals::MIXERS)  // Get the first three nodes if available
@@ -184,7 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
 
-                //println!("Choosing # globals::GATEKEEPERS random gatekeepers.");
+                eprintln!("Choosing random gatekeepers.");
                 let selected_gatekeepers: Vec<(&str, &RsaPublicKey)> = server_nodes_locked
                     .iter()
                     .take(globals::GATEKEEPERS)  // Get the first three nodes if available
@@ -216,17 +216,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(ref tulip) => {
                         let tulip_size = tulip.as_bytes().len(); // Size in bytes
                         let tulip_size_kb = tulip_size as f64 / 1024.0; // Size in KB
-                        println!("Tulip size in client.rs: {:.2} KB", tulip_size_kb);
+                        //println!("Tulip size in client.rs: {:.2} KB", tulip_size_kb);
                     }
                     Err(ref e) => {
                         let message_size = message.as_bytes().len(); // Assuming `message` is the input
                         let message_size_kb = message_size as f64 / 1024.0; // Size in KB
                         println!("tulip_encrypt failed with error: {:?}", e);
-                        println!("Message size before encryption: {:.2} KB", message_size_kb);
+                        //println!("Message size before encryption: {:.2} KB", message_size_kb);
                     }
                 }
                 let duration = start.elapsed();
-                println!("TIMER RESULTS: Time taken to encrypt message & form tulip: {:?}", duration);
+                //println!("TIMER RESULTS: Time taken to encrypt message & form tulip: {:?}", duration);
                 
                 let tulip = encrypted_tulip.unwrap();
 
@@ -242,7 +242,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let Err(e) = stream.write_all(message_to_server.as_bytes()) {
                     eprintln!("Failed to send message: {}", e);
                 } else {
-                    println!("Message sent successfully.");
+                    //println!("Message sent successfully.");
                 }
             }
         },
