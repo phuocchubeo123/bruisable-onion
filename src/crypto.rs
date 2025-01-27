@@ -58,21 +58,24 @@ pub fn dump_pubkey_list(ids: &Vec<String>, public_keys: &[X25519PublicKey], file
     Ok(())
 }
 
-pub fn dump_seckey_list(ids: &Vec<String>, seckeys: &[SecretKey], filename: &str) -> std::io::Result<()> {
-    let path = Path::new(filename);
-    let file = File::create(&path)?;
-    let mut writer = BufWriter::new(file);
 
-    for (id, seckey) in ids.iter().zip(seckeys.iter()) {
-        // Write the ID
-        writeln!(writer, "ID: {}", id)?;
-        // Write the secret key in Base64 format
-        let seckey_base64 = encode(seckey.as_bytes());
-        writeln!(writer, "{}", seckey_base64)?;
-    }
+// pub fn dump_seckey_list(ids: &Vec<String>, seckeys: &[EphemeralSecret], filename: &str) -> std::io::Result<()> {
+//     let path = Path::new(filename);
+//     let file = File::create(&path)?;
+//     let mut writer = BufWriter::new(file);
 
-    Ok(())
-}
+//     for (id, seckey) in ids.iter().zip(seckeys.iter()) {
+//         // Write the ID
+//         writeln!(writer, "ID: {}", id)?;
+
+//         // Convert the EphemeralSecret to StaticSecret and serialize to Base64
+//         let static_secret = StaticSecret::from(*seckey);
+//         let seckey_base64 = encode(static_secret.to_bytes());
+//         writeln!(writer, "{}", seckey_base64)?;
+//     }
+
+//     Ok(())
+// }
 
 pub fn read_pubkey_list(filename: &str) -> std::io::Result<(Vec<String>, Vec<PublicKey>)> {
     let path = Path::new(filename);
