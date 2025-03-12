@@ -262,6 +262,7 @@ pub fn tulip_encrypt(
         STANDARD.encode(shared_secret), // Use shared secret instead of layer key
     );
 
+
     // Use AES-GCM for encryption
     let key = GenericArray::from_slice(shared_secret); // Convert shared secret to AES key
     let aead = Aes256Gcm::new(key); // Initialize AES-GCM with the shared secret
@@ -331,7 +332,7 @@ pub fn tulip_encrypt(
         "LastGatekeeper|{}|{}|{}", //role, tag, hop index, layer key
         STANDARD.encode(&t_gatekeeper_last),
         l-2,
-        STANDARD.encode(&k[l-2]),
+        STANDARD.encode(&k[l-2]), //shared secret with pk temp and last gatekeeper
     );
 
     let e2_gatekeeper_last = format!( //nonce, vector sorted hashes
@@ -339,16 +340,42 @@ pub fn tulip_encrypt(
         STANDARD.encode(y[l-2]),
     );
 
-    let (id_gatekeeper_last, pubkey_gatekeeper_last) = gatekeepers[l2-1];
-    let mut E1 = pubkey_gatekeeper_last.encrypt(&mut rng, Pkcs1v15Encrypt, e1_gatekeeper_last.as_bytes())?; // E1 is encrypted with the pubkey of the last gatekeeper
-    let mut E2 = pubkey_gatekeeper_last.encrypt(&mut rng, Pkcs1v15Encrypt, e2_gatekeeper_last.as_bytes())?; // E1 is encrypted with the pubkey of the last gatekeeper
+    //OLD CODE BELOW
+    // let (id_gatekeeper_last, pubkey_gatekeeper_last) = gatekeepers[l2-1];
+    // let mut E1 = pubkey_gatekeeper_last.encrypt(&mut rng, Pkcs1v15Encrypt, e1_gatekeeper_last.as_bytes())?; // E1 is encrypted with the pubkey of the last gatekeeper
+    // let mut E2 = pubkey_gatekeeper_last.encrypt(&mut rng, Pkcs1v15Encrypt, e2_gatekeeper_last.as_bytes())?; // E1 is encrypted with the pubkey of the last gatekeeper
 
+    //NEW CODE HERE: need to encrypt e1 and e2 with the symmetric key (shared btwn temp sk and pk of last gatekeeper)
+    let key_bytes = k[l-2]; // Ensure this is 32 bytes for AES-256
+    let cipher = Aes256Gcm::new(Key::from_slice(&key_bytes));
+
+    // Generate a random nonce (12 bytes for AES-GCM)
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let nonce1 = Nonce::from_slice(&nonce_bytes);
+
+    // Encrypt `e1_gatekeeper_last`
+    let ciphertext_e1 = cipher.encrypt(nonce1, e1_gatekeeper_last.as_bytes())
+        .expect("Encryption failed");
+
+    // Generate a second nonce for `e2_gatekeeper_last`
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let nonce2 = Nonce::from_slice(&nonce_bytes);
+
+    // Encrypt `e2_gatekeeper_last`
+    let ciphertext_e2 = cipher.encrypt(nonce2, e2_gatekeeper_last.as_bytes())
+        .expect("Encryption failed");
+
+    //END NEW CODE
     let mut current_vAi = vA[l-1].split(",,").collect::<Vec<_>>();
 
     //println!("Created E for the last gatekeeper.");
 
     H = format!(
-        "{},,{},,{},,{}",
+        "{},,{},,{},,{},,{},,{},,{}",
+        STANDARD.encode(temporary_pubkeys[l-2].as_bytes()),
+        STANDARD.encode(&nonce1),
+        STANDARD.encode(&nonce2),
         STANDARD.encode(&E1),
         STANDARD.encode(&E2),
         current_vAi
@@ -373,7 +400,8 @@ pub fn tulip_encrypt(
         let hop_index = current_id + l1; 
 
         let (next_gatekeeper_id, next_gatekeeper_pubkey) = gatekeepers[current_id+1];
-        let current_gatekeeper_pubkey = gatekeepers[current_id].1; // pk(P_i)
+        let current_temp_key = temporary_pubkeys[hop_index];
+        //let current_gatekeeper_pubkey = gatekeepers[current_id].1; // pk(P_i)
         let current_layer_key = k[hop_index]; // k_i
         let current_layer_nonce = y[hop_index]; // y_i
 
@@ -428,13 +456,34 @@ pub fn tulip_encrypt(
             STANDARD.encode(current_layer_nonce),
         );
 
-        E1 = current_gatekeeper_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e1_gatekeeper.as_bytes())?;
-        E2 = current_gatekeeper_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e2_gatekeeper.as_bytes())?;
+
+        //let key_bytes = k[l-2]; // Ensure this is 32 bytes for AES-256
+        let cipher = Aes256Gcm::new(Key::from_slice(&current_layer_key));
+    
+        // Generate a random nonce for e1_gatekeeper and encrypt
+        let mut nonce_bytes = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce1 = Nonce::from_slice(&nonce_bytes);
+        let ciphertext_e1 = cipher.encrypt(nonce1, e1_gatekeeper.as_bytes())
+            .expect("Encryption failed");
+    
+        // Generate a second nonce for `e2_gatekeeper` & encrypt
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce2 = Nonce::from_slice(&nonce_bytes);
+        let ciphertext_e2 = cipher.encrypt(nonce2, e2_gatekeeper.as_bytes())
+            .expect("Encryption failed");
+
+        //OLD CODE
+        // E1 = current_gatekeeper_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e1_gatekeeper.as_bytes())?;
+        // E2 = current_gatekeeper_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e2_gatekeeper.as_bytes())?;
 
         current_vAi = vA[hop_index+1].split(",,").collect::<Vec<_>>();
 
         H = format!(
-            "{},,{},,{},,{}",
+            "{},,{},,{},,{},,{},,{},,{}",
+            STANDARD.encode(current_temp_key.as_bytes()),
+            STANDARD.encode(&nonce1),
+            STANDARD.encode(&nonce2),
             STANDARD.encode(&E1),
             STANDARD.encode(&E2),
             current_vAi
@@ -461,15 +510,18 @@ pub fn tulip_encrypt(
         let hop_index = current_id;
 
         let mut next_node_id = "Node 0"; // dummy for next_node_id
-        let mut next_node_pubkey = mixers[hop_index].1;
+        //let mut next_node_pubkey = mixers[hop_index].1;
+        
+
         if current_id < l1-1 {
             next_node_id = mixers[current_id+1].0;
-            next_node_pubkey = mixers[current_id+1].1;
+            //next_node_pubkey = mixers[current_id+1].1;
         } else {
             next_node_id = gatekeepers[0].0;
-            next_node_pubkey = gatekeepers[0].1;
+            //next_node_pubkey = gatekeepers[0].1;
         }
-        let current_mixer_pubkey = mixers[hop_index].1; // pk(P_i)
+        //let current_mixer_pubkey = mixers[hop_index].1; // pk(P_i)
+        let current_temp_key = temporary_pubkeys[hop_index];
         let current_layer_key = k[hop_index]; // k_i
         let current_layer_nonce = y[hop_index]; // y_i
 
@@ -531,13 +583,33 @@ pub fn tulip_encrypt(
             STANDARD.encode(current_layer_nonce),
         );
 
-        E1 = current_mixer_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e1_mixer.as_bytes())?;
-        E2 = current_mixer_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e2_mixer.as_bytes())?;
+
+        //let key_bytes = k[l-2]; // Ensure this is 32 bytes for AES-256
+        let cipher = Aes256Gcm::new(Key::from_slice(&current_layer_key));
+
+        // Generate a random nonce for e1_gatekeeper and encrypt
+        let mut nonce_bytes = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce1 = Nonce::from_slice(&nonce_bytes);
+        let ciphertext_e1 = cipher.encrypt(nonce1, e1_mixer.as_bytes())
+            .expect("Encryption failed");
+    
+        // Generate a second nonce for `e2_gatekeeper` & encrypt
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let nonce2 = Nonce::from_slice(&nonce_bytes);
+        let ciphertext_e2 = cipher.encrypt(nonce2, e2_mixer.as_bytes())
+            .expect("Encryption failed");
+
+        // E1 = current_mixer_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e1_mixer.as_bytes())?;
+        // E2 = current_mixer_pubkey.encrypt(&mut rng, Pkcs1v15Encrypt, e2_mixer.as_bytes())?;
 
         current_vAi = vA[hop_index+1].split(",,").collect::<Vec<_>>();
 
         H = format!(
-            "{},,{},,{},,{}",
+            "{},,{},,{},,  {},,{},,{},,{}",
+            STANDARD.encode(current_temp_key.as_bytes()),
+            STANDARD.encode(&nonce1),
+            STANDARD.encode(&nonce2),
             STANDARD.encode(&E1),
             STANDARD.encode(&E2),
             current_vAi
